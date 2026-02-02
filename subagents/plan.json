@@ -1,0 +1,9 @@
+{
+  "name": "Plan",
+  "icon": "📋",
+  "description": "Design implementation plans",
+  "usage": "Use when you need to plan an implementation strategy before coding.",
+  "example": "Use the Plan agent to design the authentication system",
+  "command": "Use the Plan agent to ",
+  "autoExec": false
+}

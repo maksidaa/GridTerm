@@ -1,0 +1,9 @@
+{
+  "name": "Cancel Ralph",
+  "icon": "⏹️",
+  "description": "Stop active Ralph Loop",
+  "usage": "Use to cancel a running Ralph Loop.",
+  "example": "/cancel-ralph",
+  "command": "/cancel-ralph",
+  "autoExec": true
+}

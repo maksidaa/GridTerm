@@ -1,0 +1,9 @@
+{
+  "name": "Ralph Loop",
+  "icon": "🔄",
+  "description": "Autonomous iterative task loop",
+  "usage": "Use for well-defined tasks with clear success criteria that benefit from iteration.",
+  "example": "/ralph-loop \"Build a REST API\" --completion-promise \"COMPLETE\" --max-iterations 50",
+  "command": "/ralph-loop",
+  "autoExec": true
+}

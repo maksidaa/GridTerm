@@ -1,0 +1,9 @@
+{
+  "name": "General Purpose",
+  "icon": "🔧",
+  "description": "Versatile multi-step agent",
+  "usage": "Use for open-ended searches or tasks requiring multiple rounds of exploration.",
+  "example": "Use the general-purpose agent to investigate this error",
+  "command": "Use the general-purpose agent to ",
+  "autoExec": false
+}

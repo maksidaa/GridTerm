@@ -1,0 +1,9 @@
+{
+  "name": "Explore",
+  "icon": "🔍",
+  "description": "Fast codebase exploration",
+  "usage": "Use for finding files by patterns, searching code for keywords, or answering questions about the codebase.",
+  "example": "Use the Explore agent to find all API endpoints",
+  "command": "Use the Explore agent to ",
+  "autoExec": false
+}

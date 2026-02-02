@@ -1,0 +1,9 @@
+{
+  "name": "Bash",
+  "icon": "💻",
+  "description": "Command execution specialist",
+  "usage": "Use for git, npm, docker, and other CLI operations.",
+  "example": "Use the Bash agent to run the test suite",
+  "command": "Use the Bash agent to ",
+  "autoExec": false
+}

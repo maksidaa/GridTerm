@@ -1,0 +1,29 @@
+{
+  "name": "gridterm",
+  "version": "1.0.0",
+  "description": "Multi-terminal app with auto-arranging grid layout",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --mac"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "dependencies": {
+    "node-pty": "^1.0.0",
+    "qrcode": "^1.5.3",
+    "xterm": "^5.3.0",
+    "xterm-addon-fit": "^0.8.0"
+  },
+  "build": {
+    "appId": "com.gridterm.app",
+    "productName": "GridTerm",
+    "mac": {
+      "category": "public.app-category.developer-tools"
+    }
+  }
+}

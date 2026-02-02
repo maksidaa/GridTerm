@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-src *">
+  <title>GridTerm</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="../node_modules/xterm/css/xterm.css">
+</head>
+<body>
+  <div id="titlebar">
+    <button id="sidebar-toggle" class="titlebar-btn-left" title="Toggle Sidebar">☰</button>
+    <span class="title">GridTerm</span>
+    <button id="ralph-wizard-btn" class="titlebar-btn" title="Ralph Loop Wizard">🔄 Ralph Wizard</button>
+  </div>
+
+  <div id="main-container">
+    <!-- Sidebar -->
+    <div id="sidebar" class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-header" data-section="ralph">🔄 Ralph Loop <span class="collapse-icon">▼</span></div>
+        <div class="sidebar-content" id="section-ralph">
+          <button id="sidebar-ralph-wizard" class="sidebar-btn wizard-btn">
+            <span class="btn-icon">✨</span>
+            <span>Ralph Wizard</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-header" data-section="library">📚 Agent Library <span class="collapse-icon">▼</span></div>
+        <div class="sidebar-content" id="section-library">
+          <div id="library-stats" class="library-stats"></div>
+          <div id="sidebar-library-agents"></div>
+          <button id="import-agents-btn" class="sidebar-btn import-btn">
+            <span class="btn-icon">📥</span>
+            <span>Import from Project...</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="sidebar-section collapsed">
+        <div class="sidebar-header" data-section="subagents">🤖 Built-in Subagents <span class="collapse-icon">▼</span></div>
+        <div class="sidebar-content" id="section-subagents">
+          <div id="sidebar-subagents"></div>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-header" data-section="claude">⚡ Claude Commands <span class="collapse-icon">▼</span></div>
+        <div class="sidebar-content" id="section-claude">
+          <div id="sidebar-claude-commands"></div>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-header" data-section="directories">📁 Directories <span class="collapse-icon">▼</span></div>
+        <div class="sidebar-content" id="section-directories">
+          <div id="sidebar-directories"></div>
+          <button id="sidebar-add-dir" class="sidebar-btn add-btn">+ Add Directory</button>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-header" data-section="commands">⌘ Commands <span class="collapse-icon">▼</span></div>
+        <div class="sidebar-content" id="section-commands">
+          <div id="sidebar-commands"></div>
+          <button id="sidebar-add-cmd" class="sidebar-btn add-btn">+ Add Command</button>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-header" data-section="expo-manager">&#128241; Expo Manager <span class="collapse-icon">▼</span></div>
+        <div class="sidebar-content" id="section-expo-manager">
+          <button id="open-expo-dashboard" class="sidebar-btn expo-dashboard-btn">
+            <span class="btn-icon">&#128187;</span>
+            <span>Open Dashboard</span>
+          </button>
+          <div id="running-expo-servers" class="running-servers-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Grid Container -->
+    <div id="grid-container"></div>
+  </div>
+
+  <button id="add-terminal" title="Add Terminal">+</button>
+
+  <!-- Launch Modal -->
+  <div id="launch-modal" class="modal hidden">
+    <div class="modal-content launch-modal-content">
+      <h3>New Pane</h3>
+
+      <div class="launch-section">
+        <label class="input-label">Pane Type</label>
+        <div class="pane-type-selector">
+          <button class="pane-type-btn selected" data-type="terminal">Terminal</button>
+          <button class="pane-type-btn" data-type="browser">Browser</button>
+          <button class="pane-type-btn" data-type="expo">Expo Preview</button>
+        </div>
+      </div>
+
+      <div class="launch-section browser-options hidden" id="browser-options">
+        <label class="input-label">URL</label>
+        <input type="text" id="browser-url" placeholder="https://example.com or localhost:3000">
+      </div>
+
+      <div class="launch-section expo-options hidden" id="expo-options">
+        <label class="input-label">Metro URL (or leave blank to auto-detect)</label>
+        <input type="text" id="expo-url" placeholder="http://localhost:8081">
+        <label class="checkbox-label">
+          <input type="checkbox" id="expo-show-qr" checked>
+          <span>Show QR Code for Expo Go</span>
+        </label>
+      </div>
+
+      <div class="terminal-options" id="terminal-options">
+        <div class="launch-section">
+          <label class="input-label">AI Model</label>
+          <div class="model-selector">
+            <button class="model-btn selected" data-model="none">None</button>
+            <button class="model-btn" data-model="claude">Claude</button>
+            <button class="model-btn" data-model="codex">Codex</button>
+          </div>
+        </div>
+
+      <div class="launch-section ai-options hidden" id="claude-options">
+        <label class="checkbox-label">
+          <input type="checkbox" id="skip-permissions" checked>
+          <span>--dangerously-skip-permissions</span>
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="claude-verbose">
+          <span>--verbose</span>
+        </label>
+
+        <div class="subagent-section">
+          <label class="input-label">Subagent Reference</label>
+          <select id="subagent-select">
+            <option value="">-- Available Subagents --</option>
+            <option value="Explore">🔍 Explore</option>
+            <option value="Plan">📋 Plan</option>
+            <option value="Bash">💻 Bash</option>
+            <option value="general-purpose">🔧 General Purpose</option>
+          </select>
+          <div id="subagent-description" class="subagent-description"></div>
+        </div>
+
+        <div class="startup-commands-label">Run on startup:</div>
+        <label class="checkbox-label">
+          <input type="checkbox" id="startup-compact">
+          <span>/compact</span>
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="startup-status">
+          <span>/status</span>
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="startup-ralph">
+          <span>🔄 Ralph Loop</span>
+        </label>
+        <div id="ralph-options" class="ralph-options hidden">
+          <input type="text" id="ralph-prompt" placeholder="Task: Build a REST API for todos...">
+          <div class="ralph-row">
+            <input type="text" id="ralph-promise" placeholder="Completion promise (e.g., COMPLETE)">
+            <input type="number" id="ralph-iterations" placeholder="Max iterations" value="50">
+          </div>
+        </div>
+      </div>
+
+      <div class="launch-section ai-options hidden" id="codex-options">
+        <label class="checkbox-label">
+          <input type="checkbox" id="codex-full-auto" checked>
+          <span>--full-auto</span>
+        </label>
+      </div>
+
+      <div class="launch-section">
+        <label class="input-label">Directory</label>
+        <select id="launch-directory">
+          <option value="">Home (~)</option>
+        </select>
+      </div>
+      </div><!-- end terminal-options -->
+
+      <div class="launch-section">
+        <label class="input-label">Pane Name</label>
+        <input type="text" id="launch-name" placeholder="My Pane">
+      </div>
+
+      <div class="modal-buttons">
+        <button id="cancel-launch" class="btn-secondary">Cancel</button>
+        <button id="do-launch" class="btn-primary">Launch</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Item Modal (for commands/directories) -->
+  <div id="add-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3 id="modal-title">Add Command</h3>
+      <input type="text" id="item-name" placeholder="Name">
+      <label id="item-value-label" class="input-label">Command</label>
+      <div id="item-value-wrapper" class="input-with-button">
+        <input type="text" id="item-value" placeholder="Value">
+        <button id="browse-folder" class="btn-browse hidden" title="Browse...">📁</button>
+      </div>
+      <div id="drop-hint" class="drop-hint hidden">Or drag a folder here</div>
+      <div class="modal-buttons">
+        <button id="cancel-modal" class="btn-secondary">Cancel</button>
+        <button id="save-modal" class="btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Expo Dashboard Modal -->
+  <div id="expo-dashboard-modal" class="modal hidden">
+    <div class="modal-content dashboard-modal-content">
+      <!-- Dashboard content rendered by ExpoDashboard class -->
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
