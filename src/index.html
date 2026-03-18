@@ -17,57 +17,17 @@
       <button class="layout-btn" data-layout="4" title="2x2 grid — scroll for more">2x2</button>
       <button class="layout-btn" data-layout="9" title="3x3 grid — scroll for more">3x3</button>
     </div>
-    <button id="settings-btn" class="titlebar-btn-left" style="left:auto;right:180px;" title="Settings" data-tooltip="App settings and preferences">⚙</button>
-    <button id="ralph-wizard-btn" class="titlebar-btn" title="Ralph Loop Wizard" data-tooltip="Build a structured task for Claude to work on in a loop">🔄 Ralph Wizard</button>
+    <div class="titlebar-directory-selector">
+      <select id="titlebar-directory" title="Working Directory">
+        <option value="">📁 Directory</option>
+      </select>
+    </div>
+    <button id="settings-btn" class="titlebar-btn-right" title="Settings" data-tooltip="App settings and preferences">⚙</button>
   </div>
 
   <div id="main-container">
     <!-- Sidebar -->
     <div id="sidebar" class="sidebar">
-      <div class="sidebar-section collapsed">
-        <div class="sidebar-header" data-section="ralph">🔄 Ralph Loop <span class="collapse-icon">▼</span></div>
-        <div class="sidebar-content" id="section-ralph">
-          <button id="sidebar-ralph-wizard" class="sidebar-btn wizard-btn" data-tooltip="Build a task prompt for a single Claude to iterate on in a loop">
-            <span class="btn-icon">✨</span>
-            <span>Ralph Wizard</span>
-          </button>
-          <button id="sidebar-ralph-team-wizard" class="sidebar-btn ralph-team-btn" data-tooltip="Build a Ralph Loop task that splits work across multiple agents in parallel">
-            <span class="btn-icon">✨👥</span>
-            <span>Ralph + Teams</span>
-          </button>
-          <button id="sidebar-agent-teams-wizard" class="sidebar-btn teams-btn" data-tooltip="Set up an agent team without Ralph Loop — just team composition and roles">
-            <span class="btn-icon">👥</span>
-            <span>Agent Teams</span>
-          </button>
-        </div>
-      </div>
-
-      <div class="sidebar-section collapsed">
-        <div class="sidebar-header" data-section="library">📚 Agent Library <span class="collapse-icon">▼</span></div>
-        <div class="sidebar-content" id="section-library">
-          <div id="library-stats" class="library-stats"></div>
-          <div id="sidebar-library-agents"></div>
-          <button id="import-agents-btn" class="sidebar-btn import-btn">
-            <span class="btn-icon">📥</span>
-            <span>Import from Project...</span>
-          </button>
-        </div>
-      </div>
-
-      <div class="sidebar-section collapsed">
-        <div class="sidebar-header" data-section="subagents">🤖 Built-in Subagents <span class="collapse-icon">▼</span></div>
-        <div class="sidebar-content" id="section-subagents">
-          <div id="sidebar-subagents"></div>
-        </div>
-      </div>
-
-      <div class="sidebar-section collapsed">
-        <div class="sidebar-header" data-section="claude">⚡ Claude Commands <span class="collapse-icon">▼</span></div>
-        <div class="sidebar-content" id="section-claude">
-          <div id="sidebar-claude-commands"></div>
-        </div>
-      </div>
-
       <div class="sidebar-section collapsed">
         <div class="sidebar-header" data-section="directories">📁 Directories <span class="collapse-icon">▼</span></div>
         <div class="sidebar-content" id="section-directories">
@@ -160,35 +120,6 @@
           <input type="checkbox" id="claude-verbose">
           <span>--verbose</span>
         </label>
-        <label class="checkbox-label agent-teams-label">
-          <input type="checkbox" id="enable-agent-teams" checked>
-          <span>Enable Agent Teams</span>
-          <span class="feature-badge">Experimental</span>
-        </label>
-        <div id="agent-teams-info" class="agent-teams-info
-          <div class="info-text">
-            Sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1. Claude can spawn multiple
-            teammate sub-agents that work in parallel on different parts of your task.
-          </div>
-          <div class="info-controls">
-            <span class="key-hint">Shift+Up/Down</span> Select teammate
-            <span class="key-hint">Shift+Tab</span> Delegate mode
-            <span class="key-hint">Ctrl+T</span> Task list
-          </div>
-        </div>
-
-        <div class="subagent-section">
-          <label class="input-label">Subagent Reference</label>
-          <select id="subagent-select">
-            <option value="">-- Available Subagents --</option>
-            <option value="Explore">🔍 Explore</option>
-            <option value="Plan">📋 Plan</option>
-            <option value="Bash">💻 Bash</option>
-            <option value="general-purpose">🔧 General Purpose</option>
-          </select>
-          <div id="subagent-description" class="subagent-description"></div>
-        </div>
-
         <div class="startup-commands-label">Run on startup:</div>
         <label class="checkbox-label">
           <input type="checkbox" id="startup-compact">
@@ -198,17 +129,6 @@
           <input type="checkbox" id="startup-status">
           <span>/status</span>
         </label>
-        <label class="checkbox-label">
-          <input type="checkbox" id="startup-ralph">
-          <span>🔄 Ralph Loop</span>
-        </label>
-        <div id="ralph-options" class="ralph-options hidden">
-          <input type="text" id="ralph-prompt" placeholder="Task: Build a REST API for todos...">
-          <div class="ralph-row">
-            <input type="text" id="ralph-promise" placeholder="Completion promise (e.g., COMPLETE)">
-            <input type="number" id="ralph-iterations" placeholder="Max iterations" value="50">
-          </div>
-        </div>
       </div>
 
       <div class="launch-section ai-options hidden" id="codex-options">
@@ -263,46 +183,10 @@
     </div>
   </div>
 
-  <!-- Agent Info Popup -->
-  <div id="agent-info-popup" class="agent-info-popup hidden">
-    <div class="agent-info-content">
-      <div class="agent-info-header">
-        <span id="agent-info-icon" class="agent-info-icon"></span>
-        <input type="text" id="agent-info-name" class="agent-info-name-input" />
-        <button id="agent-info-close" class="agent-info-close">&times;</button>
-      </div>
-      <div class="agent-info-body">
-        <div class="agent-info-field">
-          <label>Description</label>
-          <div id="agent-info-description"></div>
-        </div>
-        <div class="agent-info-field">
-          <label>Command</label>
-          <div id="agent-info-command" class="agent-info-command"></div>
-        </div>
-        <div class="agent-info-field" id="agent-info-usage-field">
-          <label>Usage</label>
-          <div id="agent-info-usage"></div>
-        </div>
-        <div class="agent-info-field" id="agent-info-example-field">
-          <label>Example</label>
-          <div id="agent-info-example" class="agent-info-example"></div>
-        </div>
-        <div class="agent-info-field" id="agent-info-source-field">
-          <label>Source</label>
-          <div id="agent-info-source"></div>
-        </div>
-      </div>
-      <div class="agent-info-footer">
-        <button id="agent-info-use" class="agent-info-btn primary">Use Agent</button>
-      </div>
-    </div>
-  </div>
-
   <!-- Command Palette (Cmd+K) -->
   <div id="command-palette-overlay" class="command-palette-overlay hidden">
     <div class="command-palette">
-      <input type="text" id="command-palette-input" class="command-palette-input" placeholder="Search commands, agents, directories..." autocomplete="off">
+      <input type="text" id="command-palette-input" class="command-palette-input" placeholder="Search commands, directories, panes..." autocomplete="off">
       <div id="command-palette-results" class="command-palette-results"></div>
     </div>
   </div>

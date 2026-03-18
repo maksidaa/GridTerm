@@ -22,22 +22,6 @@ window.dialog = {
   selectFolder: () => ipcRenderer.invoke('dialog:selectFolder')
 };
 
-window.subagents = {
-  load: () => ipcRenderer.invoke('subagents:load'),
-  loadFromDir: (dirPath) => ipcRenderer.invoke('subagents:loadFromDir', dirPath)
-};
-
-window.library = {
-  loadAgents: () => ipcRenderer.invoke('library:loadAgents'),
-  importFromDir: (dirPath) => ipcRenderer.invoke('library:importFromDir', dirPath),
-  browseAndImport: () => ipcRenderer.invoke('library:browseAndImport'),
-  getStats: () => ipcRenderer.invoke('library:getStats'),
-  syncDirectory: (dirPath) => ipcRenderer.invoke('library:syncDirectory', dirPath),
-  onUpdated: (callback) => {
-    ipcRenderer.on('library:updated', () => callback());
-  }
-};
-
 // Image/Screenshot handling
 window.image = {
   saveDroppedFile: (filePath) => ipcRenderer.invoke('image:saveDroppedFile', filePath),
