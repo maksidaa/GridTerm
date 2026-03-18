@@ -23,7 +23,8 @@
     "appId": "com.gridterm.app",
     "productName": "GridTerm",
     "mac": {
-      "category": "public.app-category.developer-tools"
+      "category": "public.app-category.developer-tools",
+      "icon": "icon.icns"
     }
   }
 }

@@ -56,6 +56,18 @@ window.servers = {
 // Expo integration
 window.expo = {
   detect: () => ipcRenderer.invoke('expo:detect'),
+  scanProjects: () => ipcRenderer.invoke('expo:scanProjects'),
   getProjectInfo: (path) => ipcRenderer.invoke('expo:getProjectInfo', path),
-  getLocalIp: () => ipcRenderer.invoke('expo:getLocalIp')
+  getLocalIp: () => ipcRenderer.invoke('expo:getLocalIp'),
+  // Background process management
+  startBackground: (opts) => ipcRenderer.invoke('expo:startBackground', opts),
+  stopBackground: (opts) => ipcRenderer.invoke('expo:stopBackground', opts),
+  getBackgroundProcesses: () => ipcRenderer.invoke('expo:getBackgroundProcesses'),
+  onProcessStarted: (callback) => ipcRenderer.on('expo:processStarted', (event, info) => callback(info)),
+  onProcessStopped: (callback) => ipcRenderer.on('expo:processStopped', (event, info) => callback(info))
+};
+
+// Window management
+window.windowManager = {
+  arrangeDevMode: () => ipcRenderer.invoke('window:arrangeDevMode')
 };

@@ -15,6 +15,8 @@ class BrowserPane {
     this.pane = document.createElement('div');
     this.pane.className = 'browser-pane pane';
     this.pane.id = this.id;
+
+    // Build the pane structure with a compact single-row header
     this.pane.innerHTML = `
       <div class="browser-header pane-header">
         <input type="text" class="pane-name" value="${this.name}">
@@ -111,6 +113,29 @@ class BrowserPane {
       } else {
         this.webview.reload();
       }
+    });
+
+    // Handle webview crashes - automatically reload
+    this.webview.addEventListener('did-fail-load', (e) => {
+      console.log('Webview failed to load:', e.errorCode, e.errorDescription);
+    });
+
+    this.webview.addEventListener('crashed', () => {
+      console.log('Webview crashed, reloading...');
+      setTimeout(() => {
+        this.webview.reload();
+      }, 500);
+    });
+
+    this.webview.addEventListener('unresponsive', () => {
+      console.log('Webview unresponsive, reloading...');
+      setTimeout(() => {
+        this.webview.reload();
+      }, 500);
+    });
+
+    this.webview.addEventListener('responsive', () => {
+      console.log('Webview responsive again');
     });
 
     // Expand/close buttons are handled by parent app

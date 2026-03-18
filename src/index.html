@@ -11,23 +11,38 @@
   <div id="titlebar">
     <button id="sidebar-toggle" class="titlebar-btn-left" title="Toggle Sidebar">☰</button>
     <span class="title">GridTerm</span>
-    <button id="ralph-wizard-btn" class="titlebar-btn" title="Ralph Loop Wizard">🔄 Ralph Wizard</button>
+    <div class="layout-selector" data-tooltip="Choose how many panes are visible at once — scroll to see the rest">
+      <button class="layout-btn" data-layout="1" title="Full screen — one pane at a time">1x1</button>
+      <button class="layout-btn selected" data-layout="auto" title="Auto — fit all panes">Auto</button>
+      <button class="layout-btn" data-layout="4" title="2x2 grid — scroll for more">2x2</button>
+      <button class="layout-btn" data-layout="9" title="3x3 grid — scroll for more">3x3</button>
+    </div>
+    <button id="settings-btn" class="titlebar-btn-left" style="left:auto;right:180px;" title="Settings" data-tooltip="App settings and preferences">⚙</button>
+    <button id="ralph-wizard-btn" class="titlebar-btn" title="Ralph Loop Wizard" data-tooltip="Build a structured task for Claude to work on in a loop">🔄 Ralph Wizard</button>
   </div>
 
   <div id="main-container">
     <!-- Sidebar -->
     <div id="sidebar" class="sidebar">
-      <div class="sidebar-section">
+      <div class="sidebar-section collapsed">
         <div class="sidebar-header" data-section="ralph">🔄 Ralph Loop <span class="collapse-icon">▼</span></div>
         <div class="sidebar-content" id="section-ralph">
-          <button id="sidebar-ralph-wizard" class="sidebar-btn wizard-btn">
+          <button id="sidebar-ralph-wizard" class="sidebar-btn wizard-btn" data-tooltip="Build a task prompt for a single Claude to iterate on in a loop">
             <span class="btn-icon">✨</span>
             <span>Ralph Wizard</span>
+          </button>
+          <button id="sidebar-ralph-team-wizard" class="sidebar-btn ralph-team-btn" data-tooltip="Build a Ralph Loop task that splits work across multiple agents in parallel">
+            <span class="btn-icon">✨👥</span>
+            <span>Ralph + Teams</span>
+          </button>
+          <button id="sidebar-agent-teams-wizard" class="sidebar-btn teams-btn" data-tooltip="Set up an agent team without Ralph Loop — just team composition and roles">
+            <span class="btn-icon">👥</span>
+            <span>Agent Teams</span>
           </button>
         </div>
       </div>
 
-      <div class="sidebar-section">
+      <div class="sidebar-section collapsed">
         <div class="sidebar-header" data-section="library">📚 Agent Library <span class="collapse-icon">▼</span></div>
         <div class="sidebar-content" id="section-library">
           <div id="library-stats" class="library-stats"></div>
@@ -46,14 +61,14 @@
         </div>
       </div>
 
-      <div class="sidebar-section">
+      <div class="sidebar-section collapsed">
         <div class="sidebar-header" data-section="claude">⚡ Claude Commands <span class="collapse-icon">▼</span></div>
         <div class="sidebar-content" id="section-claude">
           <div id="sidebar-claude-commands"></div>
         </div>
       </div>
 
-      <div class="sidebar-section">
+      <div class="sidebar-section collapsed">
         <div class="sidebar-header" data-section="directories">📁 Directories <span class="collapse-icon">▼</span></div>
         <div class="sidebar-content" id="section-directories">
           <div id="sidebar-directories"></div>
@@ -61,7 +76,7 @@
         </div>
       </div>
 
-      <div class="sidebar-section">
+      <div class="sidebar-section collapsed">
         <div class="sidebar-header" data-section="commands">⌘ Commands <span class="collapse-icon">▼</span></div>
         <div class="sidebar-content" id="section-commands">
           <div id="sidebar-commands"></div>
@@ -69,12 +84,16 @@
         </div>
       </div>
 
-      <div class="sidebar-section">
+      <div class="sidebar-section collapsed">
         <div class="sidebar-header" data-section="expo-manager">&#128241; Expo Manager <span class="collapse-icon">▼</span></div>
         <div class="sidebar-content" id="section-expo-manager">
           <button id="open-expo-dashboard" class="sidebar-btn expo-dashboard-btn">
             <span class="btn-icon">&#128187;</span>
             <span>Open Dashboard</span>
+          </button>
+          <button id="dev-mode-btn" class="sidebar-btn dev-mode-sidebar-btn">
+            <span class="btn-icon">&#9889;</span>
+            <span>Dev Mode (Side-by-Side)</span>
           </button>
           <div id="running-expo-servers" class="running-servers-list"></div>
         </div>
@@ -85,7 +104,7 @@
     <div id="grid-container"></div>
   </div>
 
-  <button id="add-terminal" title="Add Terminal">+</button>
+  <button id="add-terminal" title="New Pane (Cmd+T)" data-tooltip="Open a new terminal, browser, or Expo pane">+</button>
 
   <!-- Launch Modal -->
   <div id="launch-modal" class="modal hidden">
@@ -107,11 +126,18 @@
       </div>
 
       <div class="launch-section expo-options hidden" id="expo-options">
-        <label class="input-label">Metro URL (or leave blank to auto-detect)</label>
+        <label class="input-label">Expo Project</label>
+        <div class="expo-project-selector">
+          <select id="expo-project-select">
+            <option value="">-- Scanning for projects... --</option>
+          </select>
+          <button type="button" id="scan-expo-projects" class="scan-btn" title="Scan for projects">&#8635;</button>
+        </div>
+        <label class="input-label">Or enter Metro URL manually</label>
         <input type="text" id="expo-url" placeholder="http://localhost:8081">
         <label class="checkbox-label">
-          <input type="checkbox" id="expo-show-qr" checked>
-          <span>Show QR Code for Expo Go</span>
+          <input type="checkbox" id="expo-show-qr">
+          <span>Show QR Code overlay</span>
         </label>
       </div>
 
@@ -126,14 +152,30 @@
         </div>
 
       <div class="launch-section ai-options hidden" id="claude-options">
-        <label class="checkbox-label">
+        <label class="checkbox-label" data-tooltip="Lets Claude make changes without asking for approval each time">
           <input type="checkbox" id="skip-permissions" checked>
           <span>--dangerously-skip-permissions</span>
         </label>
-        <label class="checkbox-label">
+        <label class="checkbox-label" data-tooltip="Shows more detailed output from Claude">
           <input type="checkbox" id="claude-verbose">
           <span>--verbose</span>
         </label>
+        <label class="checkbox-label agent-teams-label">
+          <input type="checkbox" id="enable-agent-teams" checked>
+          <span>Enable Agent Teams</span>
+          <span class="feature-badge">Experimental</span>
+        </label>
+        <div id="agent-teams-info" class="agent-teams-info
+          <div class="info-text">
+            Sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1. Claude can spawn multiple
+            teammate sub-agents that work in parallel on different parts of your task.
+          </div>
+          <div class="info-controls">
+            <span class="key-hint">Shift+Up/Down</span> Select teammate
+            <span class="key-hint">Shift+Tab</span> Delegate mode
+            <span class="key-hint">Ctrl+T</span> Task list
+          </div>
+        </div>
 
         <div class="subagent-section">
           <label class="input-label">Subagent Reference</label>
@@ -218,6 +260,119 @@
   <div id="expo-dashboard-modal" class="modal hidden">
     <div class="modal-content dashboard-modal-content">
       <!-- Dashboard content rendered by ExpoDashboard class -->
+    </div>
+  </div>
+
+  <!-- Agent Info Popup -->
+  <div id="agent-info-popup" class="agent-info-popup hidden">
+    <div class="agent-info-content">
+      <div class="agent-info-header">
+        <span id="agent-info-icon" class="agent-info-icon"></span>
+        <input type="text" id="agent-info-name" class="agent-info-name-input" />
+        <button id="agent-info-close" class="agent-info-close">&times;</button>
+      </div>
+      <div class="agent-info-body">
+        <div class="agent-info-field">
+          <label>Description</label>
+          <div id="agent-info-description"></div>
+        </div>
+        <div class="agent-info-field">
+          <label>Command</label>
+          <div id="agent-info-command" class="agent-info-command"></div>
+        </div>
+        <div class="agent-info-field" id="agent-info-usage-field">
+          <label>Usage</label>
+          <div id="agent-info-usage"></div>
+        </div>
+        <div class="agent-info-field" id="agent-info-example-field">
+          <label>Example</label>
+          <div id="agent-info-example" class="agent-info-example"></div>
+        </div>
+        <div class="agent-info-field" id="agent-info-source-field">
+          <label>Source</label>
+          <div id="agent-info-source"></div>
+        </div>
+      </div>
+      <div class="agent-info-footer">
+        <button id="agent-info-use" class="agent-info-btn primary">Use Agent</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Command Palette (Cmd+K) -->
+  <div id="command-palette-overlay" class="command-palette-overlay hidden">
+    <div class="command-palette">
+      <input type="text" id="command-palette-input" class="command-palette-input" placeholder="Search commands, agents, directories..." autocomplete="off">
+      <div id="command-palette-results" class="command-palette-results"></div>
+    </div>
+  </div>
+
+  <!-- Context Menu -->
+  <div id="context-menu" class="context-menu hidden"></div>
+
+  <!-- Onboarding Overlay -->
+  <div id="onboarding-overlay" class="onboarding-overlay hidden">
+    <div class="onboarding-card">
+      <div class="onboarding-icon" id="onboarding-icon"></div>
+      <h2 id="onboarding-title"></h2>
+      <p id="onboarding-text"></p>
+      <div class="onboarding-dots" id="onboarding-dots"></div>
+      <button class="onboarding-btn" id="onboarding-next">Get Started</button>
+      <br>
+      <button class="onboarding-skip" id="onboarding-skip">Skip intro</button>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settings-modal" class="modal settings-modal hidden">
+    <div class="modal-content">
+      <h3>Settings</h3>
+      <div class="settings-section">
+        <div class="settings-section-title">Terminal</div>
+        <div class="settings-row">
+          <label>Font Size</label>
+          <input type="range" id="settings-font-size" class="settings-slider" min="11" max="18" value="14">
+          <span id="settings-font-size-label" style="color:#888;font-size:12px;width:30px;text-align:right;">14px</span>
+        </div>
+        <div class="settings-row">
+          <label>Theme</label>
+          <select id="settings-theme" class="settings-select">
+            <option value="dark">Dark</option>
+            <option value="darker">Darker</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title">Layout</div>
+        <div class="settings-row">
+          <label>Grid Spacing</label>
+          <select id="settings-grid-gap" class="settings-select">
+            <option value="2">Compact</option>
+            <option value="6" selected>Normal</option>
+            <option value="12">Spacious</option>
+          </select>
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title">Defaults</div>
+        <div class="settings-row">
+          <label>Default AI Model</label>
+          <select id="settings-default-model" class="settings-select">
+            <option value="none">None</option>
+            <option value="claude">Claude</option>
+            <option value="codex">Codex</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <label>Restore last session on start</label>
+          <input type="checkbox" id="settings-auto-restore" style="width:16px;height:16px;accent-color:#6cb6ff;">
+        </div>
+      </div>
+      <div class="modal-buttons">
+        <button id="settings-cancel" class="btn-secondary">Cancel</button>
+        <button id="settings-save" class="btn-primary">Save</button>
+      </div>
     </div>
   </div>
 

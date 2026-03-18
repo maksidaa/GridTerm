@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeImage, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const pty = require('node-pty');
@@ -175,9 +175,18 @@ function saveConfig(config) {
 }
 
 function createWindow() {
+  // Get the work area (screen minus menu bar and dock)
+  const { workArea } = screen.getPrimaryDisplay();
+
+  // Constrain window size to work area
+  const width = Math.min(1200, workArea.width);
+  const height = Math.min(800, workArea.height);
+
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width,
+    height,
+    x: workArea.x + Math.floor((workArea.width - width) / 2),
+    y: workArea.y,
     minWidth: 600,
     minHeight: 400,
     titleBarStyle: 'hiddenInset',
@@ -536,11 +545,11 @@ function parseMarkdownAgent(content, filename, sourcePath) {
       autoExec = true;
       isSlashCommand = true;
     } else {
-      // This is an agent without a slash command
+      // This is an agent without a slash command - derive one from filename
       name = fullTitle.replace(' Agent', '').trim();
-      command = `Read the agent file at ${filename} and act as the ${name}. Follow its guidelines and expertise to help with: `;
-      autoExec = false;
-      isSlashCommand = false;
+      command = '/' + baseFilename;
+      autoExec = true;
+      isSlashCommand = true;
     }
 
     // Extract description from ## Role, ## Identity, ## Instructions, or first paragraph
@@ -856,6 +865,166 @@ ipcMain.handle('expo:detect', async () => {
   }
 
   return servers;
+});
+
+// Scan filesystem for Expo projects
+ipcMain.handle('expo:scanProjects', async () => {
+  const { ExpoDetector } = require('./src/services/expo-detector.js');
+  const desktopPath = path.join(os.homedir(), 'Desktop');
+
+  try {
+    const projects = ExpoDetector.scanDirectoryForExpoProjects(desktopPath, 3);
+    return projects;
+  } catch (e) {
+    console.error('Error scanning for Expo projects:', e);
+    return [];
+  }
+});
+
+// Track running Expo background processes
+const expoProcesses = new Map(); // port -> { process, projectName, projectPath }
+
+// Start Expo in background mode (no terminal pane)
+ipcMain.handle('expo:startBackground', async (event, { projectPath, projectName, port, mode }) => {
+  const { spawn } = require('child_process');
+
+  // Check if already running on this port
+  if (expoProcesses.has(port)) {
+    return { success: false, error: 'Already running on this port' };
+  }
+
+  const args = ['expo', 'start', '--port', String(port)];
+  if (mode === 'ios') args.push('--ios');
+  if (mode === 'web') args.push('--web');
+
+  try {
+    const proc = spawn('npx', args, {
+      cwd: projectPath,
+      shell: true,
+      env: { ...process.env, FORCE_COLOR: '1' }
+    });
+
+    expoProcesses.set(port, {
+      process: proc,
+      projectName,
+      projectPath,
+      port,
+      mode,
+      startedAt: Date.now()
+    });
+
+    proc.on('exit', () => {
+      expoProcesses.delete(port);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('expo:processStopped', { port, projectName });
+      }
+    });
+
+    // Notify renderer that process started
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('expo:processStarted', { port, projectName, mode });
+    }
+
+    return { success: true, port };
+  } catch (e) {
+    console.error('Error starting Expo:', e);
+    return { success: false, error: e.message };
+  }
+});
+
+// Stop a background Expo process
+ipcMain.handle('expo:stopBackground', async (event, { port }) => {
+  const info = expoProcesses.get(port);
+  if (!info) {
+    return { success: false, error: 'No process on this port' };
+  }
+
+  try {
+    info.process.kill('SIGTERM');
+    expoProcesses.delete(port);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// Get list of running background Expo processes
+ipcMain.handle('expo:getBackgroundProcesses', async () => {
+  const list = [];
+  for (const [port, info] of expoProcesses) {
+    list.push({
+      port,
+      projectName: info.projectName,
+      projectPath: info.projectPath,
+      mode: info.mode,
+      startedAt: info.startedAt
+    });
+  }
+  return list;
+});
+
+// Arrange windows side-by-side for dev mode
+ipcMain.handle('window:arrangeDevMode', async () => {
+  const { exec } = require('child_process');
+
+  // Get screen dimensions
+  const { workArea } = screen.getPrimaryDisplay();
+
+  // First, get the Simulator's current position
+  const getSimPositionScript = `
+    tell application "System Events"
+      if not (exists process "Simulator") then
+        return "Simulator not running"
+      end if
+
+      tell process "Simulator"
+        try
+          set simPos to position of window 1
+          return (item 1 of simPos) as text
+        on error
+          return "error"
+        end try
+      end tell
+    end tell
+  `;
+
+  return new Promise((resolve) => {
+    exec(`osascript -e '${getSimPositionScript.replace(/'/g, "'\\''")}'`, (error, stdout, stderr) => {
+      if (error) {
+        console.error('AppleScript error:', stderr);
+        resolve('error');
+        return;
+      }
+
+      const result = stdout.trim();
+      if (result === 'Simulator not running') {
+        resolve('Simulator not running');
+        return;
+      }
+
+      const simX = parseInt(result, 10);
+      if (isNaN(simX)) {
+        console.error('Could not parse Simulator position:', result);
+        resolve('error');
+        return;
+      }
+
+      // Resize GridTerm to fill from left edge to Simulator's left edge
+      const gridTermWidth = simX - workArea.x;
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setBounds({
+          x: workArea.x,
+          y: workArea.y,
+          width: Math.max(gridTermWidth, 400), // Minimum width of 400px
+          height: workArea.height
+        });
+        mainWindow.focus();
+      }
+
+      resolve('arranged');
+    });
+  });
 });
 
 // Helper function to check if a port is open

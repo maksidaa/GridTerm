@@ -6,7 +6,8 @@ class ExpoPanePreview extends BrowserPane {
   constructor(id, name, gridContainer, metroUrl, options = {}) {
     super(id, name, gridContainer, metroUrl);
     this.metroUrl = metroUrl;
-    this.showQR = options.showQR !== false;
+    // Default to showing the actual preview, not the QR overlay
+    this.showQR = options.showQR === true;
     this.showDeviceFrame = options.showDeviceFrame || false;
     this.localIp = options.localIp || null;
     this.projectInfo = options.projectInfo || {};
