@@ -884,10 +884,10 @@ class GridTermApp {
       this.closeBrowserPane(id);
     });
 
-    // Click to focus
-    browserPane.pane.addEventListener('click', () => {
+    // Click/pointer to focus (capture phase so webview clicks are caught)
+    browserPane.pane.addEventListener('pointerdown', () => {
       this.setActivePaneId(id);
-    });
+    }, true);
 
     // Set as active pane
     this.setActivePaneId(id);
@@ -931,10 +931,10 @@ class GridTermApp {
       this.closeBrowserPane(id);
     });
 
-    // Click to focus
-    expoPane.pane.addEventListener('click', () => {
+    // Click/pointer to focus (capture phase so webview clicks are caught)
+    expoPane.pane.addEventListener('pointerdown', () => {
       this.setActivePaneId(id);
-    });
+    }, true);
 
     // Set as active pane
     this.setActivePaneId(id);
@@ -1845,11 +1845,13 @@ class GridTermApp {
     const term = this.terminals.get(id);
     if (!term) return;
 
-    // Initialize buffer for this terminal
-    if (!term._contextBuffer) {
+    // Initialize buffer for this terminal (only once — preserve _userRenamed if already set)
+    if (term._contextBuffer === undefined) {
       term._contextBuffer = '';
-      term._userRenamed = false;
       term._lastAutoName = '';
+    }
+    if (term._userRenamed === undefined) {
+      term._userRenamed = false;
     }
 
     // If user manually renamed, don't auto-rename
