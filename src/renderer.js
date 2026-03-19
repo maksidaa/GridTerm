@@ -29,6 +29,9 @@ class GridTermApp {
     this.expoDashboard = null; // Expo dashboard instance
     this.zenMode = false; // Focus/Zen mode state
     this.workspacePresets = []; // Saved workspace presets
+    this.pipes = new Map(); // Pipe connections: pipeId → { sourceId, targetId, filter, active, _buffer, _flushTimer }
+    this.pipeMode = false;
+    this.pipeCounter = 0;
 
     this.gridContainer = document.getElementById('grid-container');
     this.addButton = document.getElementById('add-terminal');
@@ -67,6 +70,7 @@ class GridTermApp {
           term.xterm.write(data);
           this.detectPaneContext(id, data);
           this.markPaneActive(id);
+          this.forwardPipeData(id, data);
         }
       });
 
@@ -179,6 +183,12 @@ class GridTermApp {
     this.appSettings = config.appSettings || {};
     this.workspacePresets = config.workspacePresets || [];
     this.renderSidebarPresets();
+    this.renderSidebarPipes();
+
+    // Pipe mode sidebar button
+    document.getElementById('sidebar-toggle-pipe-mode').addEventListener('click', () => {
+      this.togglePipeMode();
+    });
     if (this.appSettings.fontSize) {
       // Will apply when terminals are created
     }
@@ -348,7 +358,10 @@ class GridTermApp {
     this.sidebar.classList.toggle('collapsed', !this.sidebarVisible);
     document.getElementById('sidebar-toggle').textContent = this.sidebarVisible ? '◂◂' : '▸▸';
     // Refit terminals after sidebar toggle
-    setTimeout(() => this.fitAllTerminals(), 250);
+    setTimeout(() => {
+      this.fitAllTerminals();
+      if (this.pipeMode) this.renderPipeCurves();
+    }, 250);
     this.saveSessionDebounced();
   }
 
@@ -985,6 +998,15 @@ class GridTermApp {
       this.closeBrowserPane(id);
     });
 
+    // Wire up console capture for pipe forwarding
+    const webview = browserPane.pane.querySelector('webview');
+    if (webview) {
+      webview.addEventListener('console-message', (e) => {
+        this.forwardPipeData(id, e.message + '\n');
+        this.markPaneActive(id);
+      });
+    }
+
     // Click/pointer to focus (capture phase so webview clicks are caught)
     browserPane.pane.addEventListener('pointerdown', () => {
       this.setActivePaneId(id);
@@ -1034,6 +1056,15 @@ class GridTermApp {
       this.closeBrowserPane(id);
     });
 
+    // Wire up console capture for pipe forwarding
+    const expoWebview = expoPane.pane.querySelector('webview');
+    if (expoWebview) {
+      expoWebview.addEventListener('console-message', (e) => {
+        this.forwardPipeData(id, e.message + '\n');
+        this.markPaneActive(id);
+      });
+    }
+
     // Click/pointer to focus (capture phase so webview clicks are caught)
     expoPane.pane.addEventListener('pointerdown', () => {
       this.setActivePaneId(id);
@@ -1056,6 +1087,7 @@ class GridTermApp {
       browserPane.destroy();
       this.browserPanes.delete(id);
       this.allPanes.delete(id);
+      this.removePipesForPane(id);
       this.updateGridLayout();
       this.renderSidebarPanes();
       this.saveSessionDebounced();
@@ -1360,8 +1392,20 @@ class GridTermApp {
         panes.push({ type: 'expo', name, url: ep.url, showQR: ep.showQR });
       }
     }
+    // Save pipes by pane index (IDs change on restore)
+    const paneIds = Array.from(this.allPanes.keys());
+    const pipesData = [];
+    for (const [, pipe] of this.pipes) {
+      const sourceIdx = paneIds.indexOf(pipe.sourceId);
+      const targetIdx = paneIds.indexOf(pipe.targetId);
+      if (sourceIdx >= 0 && targetIdx >= 0) {
+        pipesData.push({ sourceIdx, targetIdx, filter: pipe.filter });
+      }
+    }
+
     return {
       panes,
+      pipes: pipesData,
       sidebarVisible: this.sidebarVisible,
       gridLayout: this.gridLayout,
       activePaneIndex: Array.from(this.allPanes.keys()).indexOf(this.activePaneId)
@@ -1403,6 +1447,18 @@ class GridTermApp {
       }
     }
 
+    // Restore pipes
+    if (session.pipes && session.pipes.length > 0) {
+      const newPaneIds = Array.from(this.allPanes.keys());
+      for (const p of session.pipes) {
+        const sourceId = newPaneIds[p.sourceIdx];
+        const targetId = newPaneIds[p.targetIdx];
+        if (sourceId && targetId) {
+          this.createPipe(sourceId, targetId, p.filter);
+        }
+      }
+    }
+
     if (session.panes.length > 0) {
       this.showToast(`Session restored (${session.panes.length} pane${session.panes.length > 1 ? 's' : ''})`, { type: 'info' });
     }
@@ -1431,6 +1487,7 @@ class GridTermApp {
       term.pane.remove();
       this.terminals.delete(id);
       this.allPanes.delete(id);
+      this.removePipesForPane(id);
       this.updateGridLayout();
       this.fitAllTerminals();
       this.renderSidebarPanes();
@@ -1675,6 +1732,7 @@ class GridTermApp {
     // Pane actions
     actions.push({ icon: '➕', label: 'New Pane', hint: 'Open terminal, browser, or Expo', shortcut: '⌘T', action: () => this.showLaunchModal(), category: 'Actions' });
     actions.push({ icon: '🧘', label: 'Toggle Zen Mode', hint: 'Focus on one pane', shortcut: '⌘⇧↵', action: () => { this.hideCommandPalette(); this.toggleZenMode(); }, category: 'Actions' });
+    actions.push({ icon: '⚡', label: 'Toggle Pipe Mode', hint: 'Connect pane outputs to inputs', shortcut: '⌘⇧P', action: () => { this.hideCommandPalette(); this.togglePipeMode(); }, category: 'Actions' });
     actions.push({ icon: '💾', label: 'Save Workspace', hint: 'Save current layout as a preset', action: () => { this.hideCommandPalette(); this.saveWorkspacePreset(); }, category: 'Actions' });
     actions.push({ icon: '⚙', label: 'Settings', hint: 'Font size, theme, preferences', action: () => this.showSettings(), category: 'Actions' });
 
@@ -1858,6 +1916,13 @@ class GridTermApp {
       if (isMeta && e.key === ',') {
         e.preventDefault();
         this.showSettings();
+        return;
+      }
+
+      // Cmd+Shift+P - Pipe mode
+      if (isMeta && e.shiftKey && (e.key === 'p' || e.key === 'P')) {
+        e.preventDefault();
+        this.togglePipeMode();
         return;
       }
 
@@ -2128,6 +2193,584 @@ class GridTermApp {
   }
 
   // ==========================================
+  // Pipe Mode
+  // ==========================================
+
+  togglePipeMode() {
+    this.pipeMode = !this.pipeMode;
+    document.body.classList.toggle('pipe-mode', this.pipeMode);
+    if (this.pipeMode) {
+      this.showPipeOverlay();
+      this.showToast('Pipe Mode — drag ● output to ● input', { type: 'info', duration: 3000 });
+    } else {
+      this.hidePipeOverlay();
+    }
+  }
+
+  showPipeOverlay() {
+    const overlay = document.getElementById('pipe-overlay');
+    const toolbar = document.getElementById('pipe-toolbar');
+    overlay.classList.remove('hidden');
+    toolbar.classList.remove('hidden');
+    this.updatePipeOverlayPosition();
+    this.renderPipePorts();
+    this.renderPipeCurves();
+    this.renderPipeToolbar();
+
+    this._pipeResizeHandler = () => {
+      this.updatePipeOverlayPosition();
+      this.renderPipeCurves();
+    };
+    window.addEventListener('resize', this._pipeResizeHandler);
+    this.gridContainer.addEventListener('scroll', this._pipeResizeHandler);
+  }
+
+  hidePipeOverlay() {
+    const overlay = document.getElementById('pipe-overlay');
+    const toolbar = document.getElementById('pipe-toolbar');
+    overlay.classList.add('hidden');
+    toolbar.classList.add('hidden');
+    this.removePipePorts();
+    this.hidePipeFilterEditor();
+    if (this._pipeResizeHandler) {
+      window.removeEventListener('resize', this._pipeResizeHandler);
+      this.gridContainer.removeEventListener('scroll', this._pipeResizeHandler);
+    }
+  }
+
+  updatePipeOverlayPosition() {
+    const overlay = document.getElementById('pipe-overlay');
+    if (!overlay) return;
+    const gridRect = this.gridContainer.getBoundingClientRect();
+    const mainRect = document.getElementById('main-container').getBoundingClientRect();
+    overlay.style.left = (gridRect.left - mainRect.left) + 'px';
+    overlay.style.top = (gridRect.top - mainRect.top) + 'px';
+    overlay.setAttribute('width', gridRect.width);
+    overlay.setAttribute('height', gridRect.height);
+  }
+
+  renderPipePorts() {
+    this.removePipePorts();
+
+    for (const [id, info] of this.allPanes) {
+      let paneEl;
+      if (info.type === 'terminal') {
+        paneEl = this.terminals.get(id)?.pane;
+        if (paneEl && paneEl.style.display === 'none') continue;
+      } else {
+        paneEl = this.browserPanes.get(id)?.pane;
+      }
+      if (!paneEl) continue;
+
+      const outputPort = document.createElement('div');
+      outputPort.className = 'pipe-port pipe-port-output';
+      outputPort.dataset.paneId = id;
+      outputPort.title = 'Drag to connect output';
+      paneEl.appendChild(outputPort);
+
+      const inputPort = document.createElement('div');
+      inputPort.className = 'pipe-port pipe-port-input';
+      inputPort.dataset.paneId = id;
+      inputPort.title = 'Drop here to receive input';
+      paneEl.appendChild(inputPort);
+
+      this.setupPipePortDrag(outputPort);
+    }
+  }
+
+  removePipePorts() {
+    document.querySelectorAll('.pipe-port').forEach(p => p.remove());
+    document.querySelectorAll('.pipe-filter-badge').forEach(b => b.remove());
+  }
+
+  setupPipePortDrag(outputPort) {
+    outputPort.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const sourceId = outputPort.dataset.paneId;
+      const overlay = document.getElementById('pipe-overlay');
+      const gridRect = this.gridContainer.getBoundingClientRect();
+
+      const tempCurve = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      tempCurve.classList.add('pipe-temp-curve');
+      overlay.appendChild(tempCurve);
+
+      const portRect = outputPort.getBoundingClientRect();
+      const startX = portRect.left + portRect.width / 2 - gridRect.left;
+      const startY = portRect.top + portRect.height / 2 - gridRect.top;
+
+      const onMouseMove = (ev) => {
+        const endX = ev.clientX - gridRect.left;
+        const endY = ev.clientY - gridRect.top;
+        const dx = Math.max(Math.abs(endX - startX) * 0.4, 40);
+        tempCurve.setAttribute('d', `M ${startX} ${startY} C ${startX + dx} ${startY}, ${endX - dx} ${endY}, ${endX} ${endY}`);
+
+        document.querySelectorAll('.pipe-port-input').forEach(port => {
+          const r = port.getBoundingClientRect();
+          const dist = Math.hypot(ev.clientX - (r.left + r.width / 2), ev.clientY - (r.top + r.height / 2));
+          port.classList.toggle('pipe-port-hover', dist < 30 && port.dataset.paneId !== sourceId);
+        });
+      };
+
+      const onMouseUp = (ev) => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        tempCurve.remove();
+
+        const target = document.elementFromPoint(ev.clientX, ev.clientY);
+        const inputPort = target?.closest('.pipe-port-input');
+        if (inputPort && inputPort.dataset.paneId !== sourceId) {
+          this.createPipe(sourceId, inputPort.dataset.paneId, { type: 'passthrough' });
+        }
+
+        document.querySelectorAll('.pipe-port-hover').forEach(p => p.classList.remove('pipe-port-hover'));
+      };
+
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+  }
+
+  createPipe(sourceId, targetId, filter = { type: 'passthrough' }) {
+    // Check for duplicates
+    for (const [, pipe] of this.pipes) {
+      if (pipe.sourceId === sourceId && pipe.targetId === targetId) {
+        this.showToast('Pipe already exists', { type: 'error' });
+        return null;
+      }
+    }
+
+    const id = `pipe-${++this.pipeCounter}`;
+    const pipe = { id, sourceId, targetId, filter, active: true, _buffer: '', _flushTimer: null };
+    this.pipes.set(id, pipe);
+
+    if (this.pipeMode) {
+      this.renderPipeCurves();
+      this.renderPipeToolbar();
+    }
+    this.renderSidebarPipes();
+
+    const sourceName = this.getPaneName(sourceId);
+    const targetName = this.getPaneName(targetId);
+    this.showToast(`Pipe: ${sourceName} → ${targetName}`, { type: 'success' });
+
+    this.saveSessionDebounced();
+    return pipe;
+  }
+
+  deletePipe(pipeId) {
+    const pipe = this.pipes.get(pipeId);
+    if (pipe) {
+      clearTimeout(pipe._flushTimer);
+      this.pipes.delete(pipeId);
+      if (this.pipeMode) {
+        this.renderPipeCurves();
+        this.renderPipeToolbar();
+      }
+      this.renderSidebarPipes();
+      this.hidePipeFilterEditor();
+      this.saveSessionDebounced();
+      this.showToast('Pipe removed', { type: 'info' });
+    }
+  }
+
+  removePipesForPane(paneId) {
+    const toDelete = [];
+    for (const [pipeId, pipe] of this.pipes) {
+      if (pipe.sourceId === paneId || pipe.targetId === paneId) {
+        clearTimeout(pipe._flushTimer);
+        toDelete.push(pipeId);
+      }
+    }
+    toDelete.forEach(id => this.pipes.delete(id));
+    if (toDelete.length > 0) {
+      if (this.pipeMode) this.renderPipeCurves();
+      this.renderSidebarPipes();
+    }
+  }
+
+  getPaneName(paneId) {
+    const info = this.allPanes.get(paneId);
+    if (!info) return 'Unknown';
+    if (info.type === 'terminal') {
+      return this.terminals.get(paneId)?.pane.querySelector('.terminal-name')?.value || 'Terminal';
+    }
+    return this.browserPanes.get(paneId)?.pane.querySelector('.pane-name')?.value || info.type;
+  }
+
+  applyPipeFilter(data, filter) {
+    // Strip ANSI codes for filtering
+    const clean = data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '').replace(/[\x00-\x08\x0e-\x1f]/g, '');
+    if (!clean.trim()) return null;
+
+    switch (filter.type) {
+      case 'passthrough':
+        return clean;
+
+      case 'errors': {
+        const lines = clean.split('\n');
+        const errorLines = lines.filter(line =>
+          /error|ERR|FAIL|exception|panic|FATAL|TypeError|ReferenceError|SyntaxError|Warning/i.test(line) && line.trim().length > 0
+        );
+        return errorLines.length > 0 ? errorLines.join('\n') : null;
+      }
+
+      case 'regex': {
+        if (!filter.pattern) return null;
+        try {
+          const regex = new RegExp(filter.pattern, 'gmi');
+          const lines = clean.split('\n');
+          const matched = lines.filter(line => { regex.lastIndex = 0; return regex.test(line) && line.trim().length > 0; });
+          return matched.length > 0 ? matched.join('\n') : null;
+        } catch {
+          return null;
+        }
+      }
+
+      case 'debounced':
+      case 'prompt':
+        return clean;
+
+      default:
+        return clean;
+    }
+  }
+
+  forwardPipeData(sourceId, rawData) {
+    for (const [, pipe] of this.pipes) {
+      if (pipe.sourceId !== sourceId || !pipe.active) continue;
+
+      const filtered = this.applyPipeFilter(rawData, pipe.filter);
+      if (!filtered) continue;
+
+      if (pipe.filter.type === 'debounced') {
+        pipe._buffer += filtered;
+        clearTimeout(pipe._flushTimer);
+        pipe._flushTimer = setTimeout(() => {
+          if (pipe._buffer.trim()) {
+            this.writeToPipe(pipe, pipe._buffer);
+            pipe._buffer = '';
+          }
+        }, pipe.filter.delay || 3000);
+      } else if (pipe.filter.type === 'prompt') {
+        pipe._buffer += filtered;
+        clearTimeout(pipe._flushTimer);
+        pipe._flushTimer = setTimeout(() => {
+          if (pipe._buffer.trim()) {
+            const template = pipe.filter.template || 'Output captured:\n---\n{data}\n---\nPlease analyze.';
+            const wrapped = template.replace('{data}', pipe._buffer.trim());
+            this.writeToPipe(pipe, wrapped);
+            pipe._buffer = '';
+          }
+        }, pipe.filter.delay || 5000);
+      } else {
+        this.writeToPipe(pipe, filtered);
+      }
+
+      this.flashPipeCurve(pipe.id);
+    }
+  }
+
+  writeToPipe(pipe, data) {
+    const targetInfo = this.allPanes.get(pipe.targetId);
+    if (!targetInfo) return;
+    if (targetInfo.type === 'terminal') {
+      window.terminal.write(pipe.targetId, data);
+    }
+  }
+
+  flashPipeCurve(pipeId) {
+    const curve = document.querySelector(`.pipe-curve[data-pipe-id="${pipeId}"]`);
+    if (curve) {
+      curve.classList.add('pipe-data-flash');
+      setTimeout(() => curve.classList.remove('pipe-data-flash'), 300);
+    }
+  }
+
+  renderPipeCurves() {
+    const overlay = document.getElementById('pipe-overlay');
+    if (!overlay || overlay.classList.contains('hidden')) return;
+
+    // Clear existing
+    overlay.innerHTML = '';
+    document.querySelectorAll('.pipe-filter-badge').forEach(b => b.remove());
+
+    const gridRect = this.gridContainer.getBoundingClientRect();
+    overlay.setAttribute('width', gridRect.width);
+    overlay.setAttribute('height', gridRect.height);
+
+    for (const [pipeId, pipe] of this.pipes) {
+      const sourcePort = document.querySelector(`.pipe-port-output[data-pane-id="${pipe.sourceId}"]`);
+      const targetPort = document.querySelector(`.pipe-port-input[data-pane-id="${pipe.targetId}"]`);
+      if (!sourcePort || !targetPort) continue;
+
+      const sRect = sourcePort.getBoundingClientRect();
+      const tRect = targetPort.getBoundingClientRect();
+
+      const sx = sRect.left + sRect.width / 2 - gridRect.left;
+      const sy = sRect.top + sRect.height / 2 - gridRect.top;
+      const tx = tRect.left + tRect.width / 2 - gridRect.left;
+      const ty = tRect.top + tRect.height / 2 - gridRect.top;
+
+      const dx = Math.max(Math.abs(tx - sx) * 0.4, 50);
+      const pathD = `M ${sx} ${sy} C ${sx + dx} ${sy}, ${tx - dx} ${ty}, ${tx} ${ty}`;
+
+      // Wide invisible hit area
+      const hitPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      hitPath.setAttribute('d', pathD);
+      hitPath.classList.add('pipe-curve-hit');
+      hitPath.dataset.pipeId = pipeId;
+      hitPath.addEventListener('click', (ev) => this.showPipeFilterEditor(pipeId, ev));
+      overlay.appendChild(hitPath);
+
+      // Visible animated curve
+      const curve = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      curve.setAttribute('d', pathD);
+      curve.classList.add('pipe-curve');
+      if (pipe.filter.type === 'errors') curve.classList.add('error-filter');
+      if (pipe.filter.type === 'prompt') curve.classList.add('prompt-filter');
+      curve.dataset.pipeId = pipeId;
+      curve.addEventListener('click', (ev) => this.showPipeFilterEditor(pipeId, ev));
+      overlay.appendChild(curve);
+
+      // Filter badge at midpoint
+      const midX = (sx + tx) / 2;
+      const midY = (sy + ty) / 2;
+      const filterLabels = { passthrough: '⇢ pass', errors: '⚠ errors', debounced: '⏱ buffer', prompt: '💬 prompt', regex: '/./ regex' };
+      const badge = document.createElement('div');
+      badge.className = 'pipe-filter-badge';
+      badge.textContent = filterLabels[pipe.filter.type] || pipe.filter.type;
+      badge.style.left = (gridRect.left + midX - 30) + 'px';
+      badge.style.top = (gridRect.top + midY - 10) + 'px';
+      badge.addEventListener('click', (ev) => this.showPipeFilterEditor(pipeId, ev));
+      document.body.appendChild(badge);
+    }
+  }
+
+  showPipeFilterEditor(pipeId, event) {
+    this.hidePipeFilterEditor();
+    const pipe = this.pipes.get(pipeId);
+    if (!pipe) return;
+
+    const sourceName = this.getPaneName(pipe.sourceId);
+    const targetName = this.getPaneName(pipe.targetId);
+
+    const editor = document.createElement('div');
+    editor.className = 'pipe-editor';
+    editor.id = 'pipe-editor';
+    editor.innerHTML = `
+      <h4>${sourceName} → ${targetName}</h4>
+      <div class="pipe-editor-row">
+        <label>Filter Type</label>
+        <select id="pipe-filter-type">
+          <option value="passthrough" ${pipe.filter.type === 'passthrough' ? 'selected' : ''}>Passthrough — forward all</option>
+          <option value="errors" ${pipe.filter.type === 'errors' ? 'selected' : ''}>Errors Only — error/fail/exception</option>
+          <option value="debounced" ${pipe.filter.type === 'debounced' ? 'selected' : ''}>Debounced — collect then forward</option>
+          <option value="prompt" ${pipe.filter.type === 'prompt' ? 'selected' : ''}>Prompt Wrap — wrap in AI prompt</option>
+          <option value="regex" ${pipe.filter.type === 'regex' ? 'selected' : ''}>Regex — custom pattern</option>
+        </select>
+      </div>
+      <div class="pipe-editor-row" id="pipe-delay-row" style="display:${['debounced', 'prompt'].includes(pipe.filter.type) ? '' : 'none'}">
+        <label>Collect for (ms)</label>
+        <input type="number" id="pipe-filter-delay" value="${pipe.filter.delay || 3000}" min="500" max="30000" step="500">
+      </div>
+      <div class="pipe-editor-row" id="pipe-template-row" style="display:${pipe.filter.type === 'prompt' ? '' : 'none'}">
+        <label>Prompt template ({data} = captured output)</label>
+        <textarea id="pipe-filter-template">${pipe.filter.template || 'The following error occurred:\n---\n{data}\n---\nPlease analyze and suggest a fix.'}</textarea>
+      </div>
+      <div class="pipe-editor-row" id="pipe-regex-row" style="display:${pipe.filter.type === 'regex' ? '' : 'none'}">
+        <label>Regex pattern</label>
+        <input type="text" id="pipe-filter-pattern" value="${pipe.filter.pattern || ''}" placeholder="error|fail|warn">
+      </div>
+      <div class="pipe-editor-actions">
+        <button class="pipe-editor-delete">Delete Pipe</button>
+        <button class="pipe-editor-save">Save</button>
+      </div>
+    `;
+
+    editor.style.left = Math.min(event.clientX, window.innerWidth - 290) + 'px';
+    editor.style.top = Math.min(event.clientY + 10, window.innerHeight - 320) + 'px';
+    document.body.appendChild(editor);
+
+    // Show/hide fields based on filter type
+    editor.querySelector('#pipe-filter-type').addEventListener('change', (e) => {
+      const type = e.target.value;
+      editor.querySelector('#pipe-delay-row').style.display = ['debounced', 'prompt'].includes(type) ? '' : 'none';
+      editor.querySelector('#pipe-template-row').style.display = type === 'prompt' ? '' : 'none';
+      editor.querySelector('#pipe-regex-row').style.display = type === 'regex' ? '' : 'none';
+    });
+
+    // Save
+    editor.querySelector('.pipe-editor-save').addEventListener('click', () => {
+      const type = editor.querySelector('#pipe-filter-type').value;
+      pipe.filter = { type };
+      if (['debounced', 'prompt'].includes(type)) pipe.filter.delay = parseInt(editor.querySelector('#pipe-filter-delay').value) || 3000;
+      if (type === 'prompt') pipe.filter.template = editor.querySelector('#pipe-filter-template').value;
+      if (type === 'regex') pipe.filter.pattern = editor.querySelector('#pipe-filter-pattern').value;
+      this.hidePipeFilterEditor();
+      this.renderPipeCurves();
+      this.renderSidebarPipes();
+      this.saveSessionDebounced();
+      this.showToast('Filter updated', { type: 'success' });
+    });
+
+    // Delete
+    editor.querySelector('.pipe-editor-delete').addEventListener('click', () => {
+      this.deletePipe(pipeId);
+    });
+
+    // Close on Escape
+    this._pipeEditorKeyHandler = (e) => { if (e.key === 'Escape') this.hidePipeFilterEditor(); };
+    document.addEventListener('keydown', this._pipeEditorKeyHandler);
+
+    // Close on click outside
+    setTimeout(() => {
+      this._pipeEditorClickHandler = (e) => {
+        if (!editor.contains(e.target) && !e.target.closest('.pipe-filter-badge') && !e.target.closest('.pipe-curve-hit') && !e.target.closest('.pipe-curve')) {
+          this.hidePipeFilterEditor();
+        }
+      };
+      document.addEventListener('click', this._pipeEditorClickHandler);
+    }, 100);
+  }
+
+  hidePipeFilterEditor() {
+    const editor = document.getElementById('pipe-editor');
+    if (editor) editor.remove();
+    if (this._pipeEditorKeyHandler) document.removeEventListener('keydown', this._pipeEditorKeyHandler);
+    if (this._pipeEditorClickHandler) document.removeEventListener('click', this._pipeEditorClickHandler);
+  }
+
+  renderSidebarPipes() {
+    const container = document.getElementById('sidebar-pipes');
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (this.pipes.size === 0) {
+      container.innerHTML = '<div class="sidebar-empty-hint">No active pipes</div>';
+      return;
+    }
+
+    const filterLabels = { passthrough: 'pass', errors: 'errors', debounced: 'buffer', prompt: 'prompt', regex: 'regex' };
+    for (const [pipeId, pipe] of this.pipes) {
+      const sourceName = this.getPaneName(pipe.sourceId);
+      const targetName = this.getPaneName(pipe.targetId);
+      const item = document.createElement('div');
+      item.className = 'sidebar-pipe-item';
+      item.innerHTML = `
+        <span class="pipe-source-name">${sourceName}</span>
+        <span class="pipe-arrow">→</span>
+        <span class="pipe-target-name">${targetName}</span>
+        <span class="pipe-filter-tag">${filterLabels[pipe.filter.type] || pipe.filter.type}</span>
+        <span class="item-delete" data-pipe-id="${pipeId}">×</span>
+      `;
+      item.querySelector('.item-delete').addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.deletePipe(pipeId);
+      });
+      item.addEventListener('click', () => {
+        if (!this.pipeMode) this.togglePipeMode();
+      });
+      container.appendChild(item);
+    }
+  }
+
+  renderPipeToolbar() {
+    const toolbar = document.getElementById('pipe-toolbar');
+    if (!toolbar) return;
+
+    const presets = this.getPipePresets();
+    toolbar.innerHTML = `
+      <span class="pipe-toolbar-title">⚡ Pipe Mode</span>
+      <span class="pipe-toolbar-divider"></span>
+      <span class="pipe-toolbar-info">${this.pipes.size} pipe${this.pipes.size !== 1 ? 's' : ''} · Drag ● to ● to connect</span>
+      <span class="pipe-toolbar-divider"></span>
+      ${presets.map(p => `<button class="pipe-preset-btn" data-preset="${p.id}" title="${p.description}">${p.icon} ${p.name}</button>`).join('')}
+      <button class="pipe-toolbar-exit">Exit ⌘⇧P</button>
+    `;
+
+    toolbar.querySelectorAll('.pipe-preset-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const preset = presets.find(p => p.id === btn.dataset.preset);
+        if (preset) this.applyPipePreset(preset);
+      });
+    });
+
+    toolbar.querySelector('.pipe-toolbar-exit').addEventListener('click', () => this.togglePipeMode());
+  }
+
+  getPipePresets() {
+    const presets = [];
+    const claudePanes = [], termPanes = [], bPanes = [];
+
+    for (const [id, info] of this.allPanes) {
+      if (info.type === 'terminal') {
+        const term = this.terminals.get(id);
+        const ai = term?.launchConfig?.aiCommand;
+        if (ai?.includes('claude') || ai?.includes('codex')) claudePanes.push(id);
+        else termPanes.push(id);
+      } else {
+        bPanes.push(id);
+      }
+    }
+
+    if (termPanes.length > 0 && claudePanes.length > 0) {
+      presets.push({
+        id: 'error-fixer', name: 'Error → AI', icon: '🔧',
+        description: 'Send errors from terminals to AI for analysis',
+        sourceIds: termPanes, targetId: claudePanes[0],
+        filter: { type: 'errors' }
+      });
+      presets.push({
+        id: 'prompt-fixer', name: 'Error → Prompt', icon: '💬',
+        description: 'Wrap errors in a prompt and send to AI',
+        sourceIds: termPanes, targetId: claudePanes[0],
+        filter: { type: 'prompt', delay: 5000, template: 'Error from my terminal:\n---\n{data}\n---\nPlease analyze and suggest a fix.' }
+      });
+    }
+
+    if (termPanes.length >= 2) {
+      presets.push({
+        id: 'log-stream', name: 'Log Stream', icon: '📡',
+        description: 'Stream output between terminals',
+        sourceIds: [termPanes[0]], targetId: termPanes[1],
+        filter: { type: 'passthrough' }
+      });
+    }
+
+    if (bPanes.length > 0 && claudePanes.length > 0) {
+      presets.push({
+        id: 'browser-errors', name: 'Browser → AI', icon: '🌐',
+        description: 'Send browser console errors to AI',
+        sourceIds: bPanes, targetId: claudePanes[0],
+        filter: { type: 'errors' }
+      });
+    }
+
+    return presets;
+  }
+
+  applyPipePreset(preset) {
+    let created = 0;
+    for (const sourceId of preset.sourceIds) {
+      let exists = false;
+      for (const [, pipe] of this.pipes) {
+        if (pipe.sourceId === sourceId && pipe.targetId === preset.targetId) { exists = true; break; }
+      }
+      if (!exists) {
+        this.createPipe(sourceId, preset.targetId, { ...preset.filter });
+        created++;
+      }
+    }
+    if (created > 0) {
+      this.showToast(`"${preset.name}" — ${created} pipe${created > 1 ? 's' : ''}`, { type: 'success' });
+    } else {
+      this.showToast('Pipes already exist', { type: 'info' });
+    }
+  }
+
+  // ==========================================
   // Toast Notifications
   // ==========================================
   showToast(message, { type = 'info', duration = 3000, icon = null } = {}) {
@@ -2217,12 +2860,8 @@ class GridTermApp {
     document.getElementById('grid-container').style.gap = this.appSettings.gridGap + 'px';
     document.getElementById('grid-container').style.padding = this.appSettings.gridGap + 'px';
 
-    // Save to config
-    await window.config.save({
-      commands: this.commands,
-      directories: this.directories,
-      appSettings: this.appSettings
-    });
+    // Save all config (not just settings — avoids overwriting presets/session)
+    await this.saveConfig();
 
     this.hideSettings();
     this.showToast('Settings saved', { type: 'success' });

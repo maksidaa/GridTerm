@@ -156,6 +156,7 @@ body {
   flex: 1;
   display: flex;
   overflow: hidden;
+  position: relative;
 }
 
 /* Sidebar */
@@ -2666,4 +2667,353 @@ body.zen-mode .browser-pane {
 @keyframes toastOut {
   from { opacity: 1; }
   to { opacity: 0; transform: translateY(10px); }
+}
+
+/* ==========================================
+   Pipe Mode
+   ========================================== */
+
+/* Panes need relative positioning for pipe ports */
+.terminal-pane,
+.browser-pane {
+  position: relative;
+}
+
+/* SVG overlay for pipe curves */
+.pipe-overlay {
+  position: absolute;
+  pointer-events: none;
+  z-index: 50;
+  overflow: visible;
+}
+
+/* Pipe curves */
+.pipe-curve {
+  fill: none;
+  stroke: var(--accent-purple);
+  stroke-width: 2.5;
+  stroke-dasharray: 8 4;
+  animation: pipeFlow 1s linear infinite;
+  pointer-events: stroke;
+  cursor: pointer;
+  transition: stroke 0.2s, stroke-width 0.15s;
+}
+
+.pipe-curve:hover {
+  stroke: var(--accent-purple-hover);
+  stroke-width: 3.5;
+}
+
+.pipe-curve.error-filter { stroke: var(--accent-red); }
+.pipe-curve.error-filter:hover { stroke: #ffa198; }
+.pipe-curve.prompt-filter { stroke: var(--accent-blue); }
+.pipe-curve.prompt-filter:hover { stroke: #a5d6ff; }
+
+.pipe-curve-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 16;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.pipe-temp-curve {
+  fill: none;
+  stroke: var(--accent-purple);
+  stroke-width: 2;
+  stroke-dasharray: 4 4;
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+@keyframes pipeFlow {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -12; }
+}
+
+.pipe-data-flash {
+  animation: dataFlash 0.3s ease-out, pipeFlow 1s linear infinite !important;
+}
+
+@keyframes dataFlash {
+  0% { stroke: var(--accent-green); stroke-width: 4; }
+  100% { }
+}
+
+/* Pipe port indicators */
+.pipe-port {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  z-index: 55;
+  cursor: crosshair;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.pipe-port:hover { transform: scale(1.4); }
+
+.pipe-port-output {
+  right: -7px;
+  top: 50%;
+  margin-top: -7px;
+  background: var(--accent-purple);
+  border: 2px solid var(--bg-base);
+  box-shadow: 0 0 0 2px var(--accent-purple);
+}
+
+.pipe-port-output:hover {
+  box-shadow: 0 0 10px var(--accent-purple), 0 0 0 2px var(--accent-purple);
+}
+
+.pipe-port-input {
+  left: -7px;
+  top: 50%;
+  margin-top: -7px;
+  background: var(--accent-green);
+  border: 2px solid var(--bg-base);
+  box-shadow: 0 0 0 2px var(--accent-green);
+}
+
+.pipe-port-input:hover,
+.pipe-port-input.pipe-port-hover {
+  box-shadow: 0 0 10px var(--accent-green), 0 0 0 2px var(--accent-green);
+  transform: scale(1.4);
+}
+
+/* Pipe mode pane outlines */
+body.pipe-mode .terminal-pane,
+body.pipe-mode .browser-pane {
+  outline: 1px dashed rgba(99, 102, 241, 0.4);
+  outline-offset: -1px;
+}
+
+body.pipe-mode .terminal-pane:hover,
+body.pipe-mode .browser-pane:hover {
+  outline-color: var(--accent-purple);
+}
+
+body.pipe-mode #add-terminal {
+  display: none;
+}
+
+/* Filter badge on curve midpoint */
+.pipe-filter-badge {
+  position: fixed;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent-purple);
+  pointer-events: auto;
+  cursor: pointer;
+  z-index: 56;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.pipe-filter-badge:hover {
+  background: var(--bg-hover);
+}
+
+/* Pipe toolbar (bottom bar in pipe mode) */
+.pipe-toolbar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 44px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--accent-purple);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 10px;
+  z-index: 100;
+  animation: slideUp 0.2s ease-out;
+}
+
+.pipe-toolbar.hidden { display: none; }
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.pipe-toolbar-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-purple);
+}
+
+.pipe-toolbar-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--border-default);
+}
+
+.pipe-toolbar-info {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.pipe-preset-btn {
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border-interactive);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.pipe-preset-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-purple);
+  color: var(--text-primary);
+}
+
+.pipe-toolbar-exit {
+  margin-left: auto;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--accent-red);
+  background: transparent;
+  color: var(--accent-red);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.pipe-toolbar-exit:hover {
+  background: var(--accent-red-bg);
+}
+
+/* Pipe filter editor popover */
+.pipe-editor {
+  position: fixed;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 12px;
+  min-width: 260px;
+  z-index: 200;
+  box-shadow: var(--shadow-elevated);
+}
+
+.pipe-editor h4 {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.pipe-editor-row {
+  margin-bottom: 8px;
+}
+
+.pipe-editor-row label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+}
+
+.pipe-editor-row select,
+.pipe-editor-row input,
+.pipe-editor-row textarea {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.pipe-editor-row textarea {
+  resize: vertical;
+  min-height: 60px;
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 11px;
+}
+
+.pipe-editor-actions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.pipe-editor-delete {
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--accent-red);
+  background: transparent;
+  color: var(--accent-red);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.pipe-editor-delete:hover {
+  background: var(--accent-red-bg);
+}
+
+.pipe-editor-save {
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: none;
+  background: var(--accent-purple);
+  color: #fff;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.pipe-editor-save:hover {
+  background: var(--accent-purple-hover);
+}
+
+/* Sidebar pipe items */
+.sidebar-pipe-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.sidebar-pipe-item:hover {
+  background: var(--bg-hover);
+}
+
+.pipe-source-name, .pipe-target-name {
+  max-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pipe-arrow {
+  color: var(--accent-purple);
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+.pipe-filter-tag {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: rgba(99, 102, 241, 0.15);
+  color: var(--accent-purple);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.sidebar-pipe-item .item-delete {
+  flex-shrink: 0;
 }

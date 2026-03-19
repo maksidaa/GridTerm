@@ -62,6 +62,14 @@
       </div>
 
       <div class="sidebar-section collapsed">
+        <div class="sidebar-header" data-section="pipes">⚡ Pipes <span class="collapse-icon">▼</span></div>
+        <div class="sidebar-content" id="section-pipes">
+          <div id="sidebar-pipes"></div>
+          <button id="sidebar-toggle-pipe-mode" class="sidebar-btn add-btn">⚡ Pipe Mode</button>
+        </div>
+      </div>
+
+      <div class="sidebar-section collapsed">
         <div class="sidebar-header" data-section="expo-manager">&#128241; Expo Manager <span class="collapse-icon">▼</span></div>
         <div class="sidebar-content" id="section-expo-manager">
           <button id="open-expo-dashboard" class="sidebar-btn expo-dashboard-btn">
@@ -79,6 +87,12 @@
 
     <!-- Grid Container -->
     <div id="grid-container"></div>
+
+    <!-- Pipe Mode SVG Overlay -->
+    <svg id="pipe-overlay" class="pipe-overlay hidden"></svg>
+
+    <!-- Pipe Mode Toolbar -->
+    <div id="pipe-toolbar" class="pipe-toolbar hidden"></div>
   </div>
 
   <button id="add-terminal" title="New Pane (Cmd+T)" data-tooltip="Click for new terminal · Right-click for options">+</button>
