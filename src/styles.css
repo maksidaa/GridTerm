@@ -3778,3 +3778,13 @@ body.pipe-mode #add-terminal {
   background: var(--accent-red-bg);
   color: var(--accent-red);
 }
+
+/* Input Safety Flash */
+@keyframes backgroundInputFlash {
+  0% { background: rgba(108, 182, 255, 0.2); }
+  100% { background: transparent; }
+}
+
+.background-input-flash {
+  animation: backgroundInputFlash 0.6s ease-out;
+}

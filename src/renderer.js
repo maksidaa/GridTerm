@@ -3492,11 +3492,27 @@ class GridTermApp {
     if (!targetInfo) return;
     if (targetInfo.type === 'terminal') {
       window.terminal.write(pipe.targetId, data);
+      // Flash background pane header when receiving pipe input
+      if (pipe.targetId !== this.activePaneId) {
+        this.flashPaneHeader(pipe.targetId);
+      }
     }
     // Update stats
     pipe.stats.messageCount++;
     pipe.stats.bytesForwarded += data.length;
     pipe.stats.lastActivity = Date.now();
+  }
+
+  flashPaneHeader(paneId) {
+    const term = this.terminals.get(paneId);
+    const el = term?.pane || this.browserPanes.get(paneId)?.pane;
+    if (!el) return;
+    const header = el.querySelector('.terminal-header, .browser-header');
+    if (!header) return;
+    header.classList.remove('background-input-flash');
+    // Force reflow to restart animation
+    void header.offsetWidth;
+    header.classList.add('background-input-flash');
   }
 
   flashPipeCurve(pipeId) {
@@ -4084,6 +4100,7 @@ class GridTermApp {
       cleanup();
       for (const { id } of aiPanes) {
         window.terminal.write(id, text + '\n');
+        if (id !== this.activePaneId) this.flashPaneHeader(id);
       }
       this.showToast(`Broadcast sent to ${aiPanes.length} pane${aiPanes.length > 1 ? 's' : ''}`, { type: 'success' });
     };
