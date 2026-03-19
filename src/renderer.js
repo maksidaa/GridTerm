@@ -407,6 +407,7 @@ class GridTermApp {
       return;
     }
 
+    const fragment = document.createDocumentFragment();
     let index = 1;
     for (const id of tabPaneIds) {
       const info = this.allPanes.get(id);
@@ -447,9 +448,10 @@ class GridTermApp {
         if (isMinimized) this.toggleMinimize(id);
         this.setActivePaneId(id);
       });
-      container.appendChild(item);
+      fragment.appendChild(item);
       index++;
     }
+    container.appendChild(fragment);
   }
 
   updateEmptyHints() {
