@@ -390,13 +390,16 @@ class GridTermApp {
     if (!container) return;
     container.innerHTML = '';
 
-    if (this.allPanes.size === 0) {
+    const tabPaneIds = this.getActiveTabPanes();
+    if (tabPaneIds.length === 0) {
       container.innerHTML = '<div class="sidebar-empty-hint">No open panes</div>';
       return;
     }
 
     let index = 1;
-    for (const [id, info] of this.allPanes) {
+    for (const id of tabPaneIds) {
+      const info = this.allPanes.get(id);
+      if (!info) continue;
       let name, icon, isMinimized = false;
 
       if (info.type === 'terminal') {
@@ -1700,9 +1703,12 @@ class GridTermApp {
   }
 
   updateGridLayout() {
-    // Count only VISIBLE panes (not minimized/hidden ones)
+    // Count only VISIBLE panes in active tab (not minimized/hidden ones)
+    const tabPaneIds = this.getActiveTabPanes();
     let count = 0;
-    for (const [id, info] of this.allPanes) {
+    for (const id of tabPaneIds) {
+      const info = this.allPanes.get(id);
+      if (!info) continue;
       if (info.type === 'terminal') {
         const term = this.terminals.get(id);
         if (term && !term.pane.classList.contains('minimized')) {
@@ -1720,7 +1726,7 @@ class GridTermApp {
     this.gridContainer.className = `${layoutClass} ${countClass}`;
 
     // Show welcome state when no panes exist
-    if (count === 0 && this.allPanes.size === 0) {
+    if (count === 0 && tabPaneIds.length === 0) {
       this.showWelcomeState();
     } else {
       this.hideWelcomeState();
@@ -1778,7 +1784,11 @@ class GridTermApp {
   }
 
   fitAllTerminals() {
-    this.terminals.forEach((term) => {
+    const tabPaneIds = new Set(this.getActiveTabPanes());
+    this.terminals.forEach((term, id) => {
+      // Skip terminals not in active tab or with zero dimensions (hidden)
+      if (!tabPaneIds.has(id)) return;
+      if (term.pane.offsetHeight === 0) return;
       try {
         term.fitAddon.fit();
       } catch (e) {
@@ -1937,9 +1947,12 @@ class GridTermApp {
     actions.push({ icon: '💾', label: 'Save Workspace', hint: 'Save current layout as a preset', action: () => { this.hideCommandPalette(); this.saveWorkspacePreset(); }, category: 'Actions' });
     actions.push({ icon: '⚙', label: 'Settings', hint: 'Font size, theme, preferences', action: () => this.showSettings(), category: 'Actions' });
 
-    // Open panes (all types)
+    // Open panes in active tab
     let paneIndex = 1;
-    for (const [id, info] of this.allPanes) {
+    const tabPaneIds = this.getActiveTabPanes();
+    for (const id of tabPaneIds) {
+      const info = this.allPanes.get(id);
+      if (!info) continue;
       let name, icon;
       if (info.type === 'terminal') {
         const term = this.terminals.get(id);
@@ -2114,11 +2127,11 @@ class GridTermApp {
         return;
       }
 
-      // Cmd+1-9 - Switch to pane by number
+      // Cmd+1-9 - Switch to pane by number (within active tab)
       if (isMeta && e.key >= '1' && e.key <= '9') {
         e.preventDefault();
         const paneNum = parseInt(e.key);
-        const paneIds = Array.from(this.allPanes.keys());
+        const paneIds = this.getActiveTabPanes();
         if (paneNum <= paneIds.length) {
           this.setActivePaneId(paneIds[paneNum - 1]);
         }
@@ -2156,7 +2169,7 @@ class GridTermApp {
   }
 
   switchPane(direction) {
-    const paneIds = Array.from(this.allPanes.keys());
+    const paneIds = this.getActiveTabPanes();
     if (paneIds.length === 0) return;
 
     const currentIndex = paneIds.indexOf(this.activePaneId);
@@ -2471,7 +2484,10 @@ class GridTermApp {
   renderPipePorts() {
     this.removePipePorts();
 
-    for (const [id, info] of this.allPanes) {
+    const tabPaneIds = this.getActiveTabPanes();
+    for (const id of tabPaneIds) {
+      const info = this.allPanes.get(id);
+      if (!info) continue;
       let paneEl;
       if (info.type === 'terminal') {
         paneEl = this.terminals.get(id)?.pane;
@@ -2659,6 +2675,10 @@ class GridTermApp {
   forwardPipeData(sourceId, rawData) {
     for (const [, pipe] of this.pipes) {
       if (pipe.sourceId !== sourceId || !pipe.active) continue;
+      // Only forward if both source and target are in the same tab
+      const sourceTab = this.paneToTab.get(pipe.sourceId);
+      const targetTab = this.paneToTab.get(pipe.targetId);
+      if (sourceTab && targetTab && sourceTab !== targetTab) continue;
 
       const filtered = this.applyPipeFilter(rawData, pipe.filter);
       if (!filtered) continue;
@@ -2723,7 +2743,11 @@ class GridTermApp {
     overlay.setAttribute('width', gridRect.width);
     overlay.setAttribute('height', gridRect.height);
 
+    const tabPaneSet = new Set(this.getActiveTabPanes());
+
     for (const [pipeId, pipe] of this.pipes) {
+      // Only render pipes where both ends are in the active tab
+      if (!tabPaneSet.has(pipe.sourceId) || !tabPaneSet.has(pipe.targetId)) continue;
       const sourcePort = document.querySelector(`.pipe-port-output[data-pane-id="${pipe.sourceId}"]`);
       const targetPort = document.querySelector(`.pipe-port-input[data-pane-id="${pipe.targetId}"]`);
       if (!sourcePort || !targetPort) continue;
@@ -3237,8 +3261,10 @@ class GridTermApp {
 
   showBroadcastPrompt() {
     const aiPanes = [];
-    for (const [id, info] of this.allPanes) {
-      if (info.type !== 'terminal') continue;
+    const tabPaneIds = this.getActiveTabPanes();
+    for (const id of tabPaneIds) {
+      const info = this.allPanes.get(id);
+      if (!info || info.type !== 'terminal') continue;
       const term = this.terminals.get(id);
       const ai = term?.launchConfig?.aiCommand;
       if (ai?.includes('claude') || ai?.includes('codex')) {
@@ -3641,7 +3667,10 @@ class GridTermApp {
   // ==========================================
   updatePaneNumbers() {
     let index = 1;
-    for (const [id, info] of this.allPanes) {
+    const tabPaneIds = this.getActiveTabPanes();
+    for (const id of tabPaneIds) {
+      const info = this.allPanes.get(id);
+      if (!info) continue;
       let paneEl;
       if (info.type === 'terminal') {
         paneEl = this.terminals.get(id)?.pane;
