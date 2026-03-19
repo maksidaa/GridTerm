@@ -9,7 +9,7 @@
 </head>
 <body>
   <div id="titlebar">
-    <button id="sidebar-toggle" class="titlebar-btn-left" title="Toggle Sidebar">☰</button>
+    <button id="sidebar-toggle" class="titlebar-btn-left" title="Toggle Sidebar">◂◂</button>
     <span class="title">GridTerm</span>
     <div class="layout-selector" data-tooltip="Choose how many panes are visible at once — scroll to see the rest">
       <button class="layout-btn" data-layout="1" title="Full screen — one pane at a time">1x1</button>
@@ -64,7 +64,7 @@
     <div id="grid-container"></div>
   </div>
 
-  <button id="add-terminal" title="New Pane (Cmd+T)" data-tooltip="Open a new terminal, browser, or Expo pane">+</button>
+  <button id="add-terminal" title="New Pane (Cmd+T)" data-tooltip="Click for new terminal · Right-click for options">+</button>
 
   <!-- Launch Modal -->
   <div id="launch-modal" class="modal hidden">
@@ -260,6 +260,7 @@
     </div>
   </div>
 
+  <div id="toast-container"></div>
   <script src="renderer.js"></script>
 </body>
 </html>

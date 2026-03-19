@@ -72,7 +72,11 @@ class GridTermApp {
       });
 
       // Event listeners
-      this.addButton.addEventListener('click', () => this.showLaunchModal());
+      this.addButton.addEventListener('click', () => this.quickLaunch());
+      this.addButton.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        this.showLaunchModal();
+      });
 
     // Launch modal events
     document.getElementById('cancel-launch').addEventListener('click', () => {
@@ -252,19 +256,32 @@ class GridTermApp {
       this.fitAllTerminals();
     });
 
-    // Show onboarding on first run, then launch modal
+    // Show onboarding on first run, restore session, or show launch modal
     if (!localStorage.getItem('gridterm-onboarded')) {
-      this.showOnboarding();
+      this.showOnboarding(); // will call showLaunchModal() on completion
+    } else if (this.appSettings.autoRestore && config.session && config.session.panes && config.session.panes.length > 0) {
+      await this.restoreSession(config.session);
+    } else {
+      this.showLaunchModal();
+      this.showWelcomeState();
     }
-    this.showLaunchModal();
-    this.showWelcomeState();
     } catch (err) {
       console.error('Error in init():', err);
     }
   }
 
+  async quickLaunch() {
+    const model = (this.appSettings && this.appSettings.defaultModel) || 'none';
+    let aiCommand = '';
+    if (model === 'claude') {
+      aiCommand = 'claude --dangerously-skip-permissions';
+    } else if (model === 'codex') {
+      aiCommand = 'codex --full-auto';
+    }
+    await this.createTerminal({ name: null, directory: null, aiCommand, startupCommands: [] });
+  }
+
   showLaunchModal() {
-    console.log('showLaunchModal called, launchModal element:', this.launchModal);
     // Reset modal state
     this.selectedPaneType = 'terminal';
     document.querySelectorAll('.pane-type-btn').forEach(btn => {
@@ -305,13 +322,24 @@ class GridTermApp {
     document.getElementById('startup-status').checked = false;
 
     this.launchModal.classList.remove('hidden');
+
+    // Keyboard: Esc to close, Enter to launch (unless in input/select)
+    if (this._launchModalKeyHandler) document.removeEventListener('keydown', this._launchModalKeyHandler);
+    this._launchModalKeyHandler = (e) => {
+      if (this.launchModal.classList.contains('hidden')) return;
+      if (e.key === 'Escape') { this.launchModal.classList.add('hidden'); }
+      if (e.key === 'Enter' && !e.target.matches('input, select, textarea')) { this.doLaunch(); }
+    };
+    document.addEventListener('keydown', this._launchModalKeyHandler);
   }
 
   toggleSidebar() {
     this.sidebarVisible = !this.sidebarVisible;
     this.sidebar.classList.toggle('collapsed', !this.sidebarVisible);
+    document.getElementById('sidebar-toggle').textContent = this.sidebarVisible ? '◂◂' : '▸▸';
     // Refit terminals after sidebar toggle
     setTimeout(() => this.fitAllTerminals(), 250);
+    this.saveSessionDebounced();
   }
 
   renderSidebar() {
@@ -747,8 +775,8 @@ class GridTermApp {
     xterm.loadAddon(fitAddon);
     xterm.open(termBody);
 
-    // Store terminal info
-    this.terminals.set(id, { xterm, fitAddon, pane });
+    // Store terminal info (including launch config for session restore)
+    this.terminals.set(id, { xterm, fitAddon, pane, launchConfig: { name, directory, aiCommand, startupCommands } });
     this.allPanes.set(id, { type: 'terminal', pane: { pane } });
 
     // Lock user-provided names so auto-naming doesn't overwrite them
@@ -858,6 +886,8 @@ class GridTermApp {
         }
       }
     }, 50);
+
+    this.saveSessionDebounced();
   }
 
   delay(ms) {
@@ -894,6 +924,7 @@ class GridTermApp {
 
     // Update grid layout
     this.updateGridLayout();
+    this.saveSessionDebounced();
 
     return browserPane;
   }
@@ -941,6 +972,7 @@ class GridTermApp {
 
     // Update grid layout
     this.updateGridLayout();
+    this.saveSessionDebounced();
 
     return expoPane;
   }
@@ -952,6 +984,7 @@ class GridTermApp {
       this.browserPanes.delete(id);
       this.allPanes.delete(id);
       this.updateGridLayout();
+      this.saveSessionDebounced();
     }
 
     // If no panes left, show launch modal
@@ -1182,6 +1215,18 @@ class GridTermApp {
 
     this.modal.classList.remove('hidden');
     this.itemNameInput.focus();
+
+    // Keyboard: Esc to close, Enter to advance/save
+    if (this._addModalKeyHandler) document.removeEventListener('keydown', this._addModalKeyHandler);
+    this._addModalKeyHandler = (e) => {
+      if (this.modal.classList.contains('hidden')) return;
+      if (e.key === 'Escape') { this.hideModal(); }
+      if (e.key === 'Enter') {
+        if (e.target === this.itemNameInput) { this.itemValueInput.focus(); e.preventDefault(); }
+        else if (e.target === this.itemValueInput) { this.saveModalItem(); e.preventDefault(); }
+      }
+    };
+    document.addEventListener('keydown', this._addModalKeyHandler);
   }
 
   hideModal() {
@@ -1203,6 +1248,7 @@ class GridTermApp {
       }
       await this.saveConfig();
       this.hideModal();
+      this.showToast(`${name} added`, { type: 'success' });
     }
   }
 
@@ -1210,8 +1256,78 @@ class GridTermApp {
     await window.config.save({
       commands: this.commands,
       directories: this.directories,
-      appSettings: this.appSettings
+      appSettings: this.appSettings,
+      session: this.getSessionData()
     });
+  }
+
+  getSessionData() {
+    const panes = [];
+    for (const [id, info] of this.allPanes) {
+      if (info.type === 'terminal') {
+        const term = this.terminals.get(id);
+        if (!term) continue;
+        const name = term.pane.querySelector('.terminal-name')?.value || null;
+        const lc = term.launchConfig || {};
+        panes.push({ type: 'terminal', name, directory: lc.directory, aiCommand: lc.aiCommand });
+      } else if (info.type === 'browser') {
+        const bp = this.browserPanes.get(id);
+        if (!bp) continue;
+        const name = bp.pane.querySelector('.pane-name')?.value || 'Browser';
+        panes.push({ type: 'browser', name, url: bp.url });
+      } else if (info.type === 'expo') {
+        const ep = this.browserPanes.get(id);
+        if (!ep) continue;
+        const name = ep.pane.querySelector('.pane-name')?.value || 'Expo';
+        panes.push({ type: 'expo', name, url: ep.url, showQR: ep.showQR });
+      }
+    }
+    return {
+      panes,
+      sidebarVisible: this.sidebarVisible,
+      gridLayout: this.gridLayout,
+      activePaneIndex: Array.from(this.allPanes.keys()).indexOf(this.activePaneId)
+    };
+  }
+
+  saveSessionDebounced() {
+    clearTimeout(this._sessionSaveTimer);
+    this._sessionSaveTimer = setTimeout(() => this.saveConfig(), 500);
+  }
+
+  async restoreSession(session) {
+    // Restore sidebar state
+    if (session.sidebarVisible === false && this.sidebarVisible) {
+      this.toggleSidebar();
+    }
+
+    // Restore grid layout
+    if (session.gridLayout) {
+      this.setGridLayout(session.gridLayout);
+    }
+
+    // Restore panes
+    for (const p of session.panes) {
+      if (p.type === 'terminal') {
+        await this.createTerminal({ name: p.name, directory: p.directory, aiCommand: p.aiCommand, startupCommands: [] });
+      } else if (p.type === 'browser') {
+        await this.createBrowserPane({ name: p.name, url: p.url });
+      } else if (p.type === 'expo') {
+        await this.createExpoPanePreview({ name: p.name, url: p.url, showQR: p.showQR });
+      }
+    }
+
+    // Restore active pane
+    if (session.activePaneIndex >= 0) {
+      const ids = Array.from(this.allPanes.keys());
+      if (ids[session.activePaneIndex]) {
+        this.setActivePaneId(ids[session.activePaneIndex]);
+      }
+    }
+
+    if (session.panes.length > 0) {
+      this.showToast(`Session restored (${session.panes.length} pane${session.panes.length > 1 ? 's' : ''})`, { type: 'info' });
+    }
   }
 
   async deleteCommand(index) {
@@ -1239,6 +1355,7 @@ class GridTermApp {
       this.allPanes.delete(id);
       this.updateGridLayout();
       this.fitAllTerminals();
+      this.saveSessionDebounced();
     }
 
     // If no panes left, show launch modal
@@ -1290,6 +1407,7 @@ class GridTermApp {
 
     // Refit terminals after layout change
     setTimeout(() => this.fitAllTerminals(), 100);
+    this.saveSessionDebounced();
   }
 
   fitAllTerminals() {
@@ -1644,26 +1762,35 @@ class GridTermApp {
   // ==========================================
   setupContextMenu() {
     document.addEventListener('contextmenu', (e) => {
-      const pane = e.target.closest('.terminal-pane');
+      const pane = e.target.closest('.terminal-pane') || e.target.closest('.browser-pane');
       if (!pane) {
         this.hideContextMenu();
         return;
       }
 
       e.preventDefault();
-      const termId = pane.id;
+      const paneId = pane.id;
+      const paneInfo = this.allPanes.get(paneId);
+      const paneType = paneInfo?.type || 'terminal';
+
+      // Build menu items based on pane type
+      let items = '';
+      items += `<div class="context-menu-item" data-action="rename"><span class="ctx-icon">✏️</span>Rename</div>`;
+      items += `<div class="context-menu-item" data-action="duplicate"><span class="ctx-icon">📋</span>Duplicate Pane</div>`;
+      items += `<div class="context-menu-divider"></div>`;
+      if (paneType === 'terminal') {
+        items += `<div class="context-menu-item" data-action="minimize"><span class="ctx-icon">─</span>Minimize</div>`;
+      }
+      items += `<div class="context-menu-item" data-action="expand"><span class="ctx-icon">⤢</span>Expand</div>`;
+      if (paneType === 'browser' || paneType === 'expo') {
+        items += `<div class="context-menu-item" data-action="refresh"><span class="ctx-icon">↻</span>Refresh</div>`;
+        items += `<div class="context-menu-item" data-action="copyurl"><span class="ctx-icon">🔗</span>Copy URL</div>`;
+      }
+      items += `<div class="context-menu-divider"></div>`;
+      items += `<div class="context-menu-item" data-action="close" style="color:#f85149;"><span class="ctx-icon">✕</span>Close<span class="ctx-shortcut">⌘W</span></div>`;
 
       const menu = document.getElementById('context-menu');
-      menu.innerHTML = `
-        <div class="context-menu-item" data-action="rename"><span class="ctx-icon">✏️</span>Rename<span class="ctx-shortcut"></span></div>
-        <div class="context-menu-item" data-action="duplicate"><span class="ctx-icon">📋</span>Duplicate Pane<span class="ctx-shortcut"></span></div>
-        <div class="context-menu-divider"></div>
-        <div class="context-menu-item" data-action="minimize"><span class="ctx-icon">─</span>Minimize<span class="ctx-shortcut"></span></div>
-        <div class="context-menu-item" data-action="expand"><span class="ctx-icon">⤢</span>Expand<span class="ctx-shortcut"></span></div>
-        <div class="context-menu-divider"></div>
-        <div class="context-menu-item" data-action="close" style="color:#f85149;"><span class="ctx-icon">✕</span>Close<span class="ctx-shortcut">⌘W</span></div>
-      `;
-
+      menu.innerHTML = items;
       menu.style.left = e.clientX + 'px';
       menu.style.top = e.clientY + 'px';
       menu.classList.remove('hidden');
@@ -1672,11 +1799,29 @@ class GridTermApp {
         item.addEventListener('click', () => {
           this.hideContextMenu();
           const action = item.dataset.action;
-          if (action === 'close') this.closeTerminal(termId);
-          else if (action === 'minimize') this.toggleMinimize(termId);
-          else if (action === 'expand') this.toggleExpand(termId);
-          else if (action === 'rename') pane.querySelector('.terminal-name')?.focus();
-          else if (action === 'duplicate') this.duplicatePane(termId);
+          if (action === 'close') {
+            if (paneType === 'terminal') this.closeTerminal(paneId);
+            else this.closeBrowserPane(paneId);
+          } else if (action === 'minimize') {
+            this.toggleMinimize(paneId);
+          } else if (action === 'expand') {
+            if (paneType === 'terminal') {
+              this.toggleExpand(paneId);
+            } else {
+              const bp = this.browserPanes.get(paneId);
+              if (bp?.toggleExpand) bp.toggleExpand();
+            }
+          } else if (action === 'rename') {
+            pane.querySelector('.terminal-name, .pane-name')?.focus();
+          } else if (action === 'duplicate') {
+            this.duplicatePane(paneId);
+          } else if (action === 'refresh') {
+            const bp = this.browserPanes.get(paneId);
+            if (bp?.webview) bp.webview.reload();
+          } else if (action === 'copyurl') {
+            const bp = this.browserPanes.get(paneId);
+            if (bp?.url) navigator.clipboard.writeText(bp.url);
+          }
         });
       });
     });
@@ -1691,11 +1836,54 @@ class GridTermApp {
     document.getElementById('context-menu')?.classList.add('hidden');
   }
 
-  async duplicatePane(termId) {
-    const term = this.terminals.get(termId);
-    if (!term) return;
-    const name = term.pane.querySelector('.terminal-name')?.value || '';
-    await this.createTerminal({ name: name + ' (copy)' });
+  async duplicatePane(paneId) {
+    const paneInfo = this.allPanes.get(paneId);
+    if (!paneInfo) return;
+
+    if (paneInfo.type === 'terminal') {
+      const term = this.terminals.get(paneId);
+      if (!term) return;
+      const name = term.pane.querySelector('.terminal-name')?.value || '';
+      await this.createTerminal({ name: name + ' (copy)' });
+    } else if (paneInfo.type === 'browser') {
+      const bp = this.browserPanes.get(paneId);
+      if (!bp) return;
+      const name = bp.pane.querySelector('.pane-name')?.value || 'Browser';
+      await this.createBrowserPane({ name: name + ' (copy)', url: bp.url });
+    } else if (paneInfo.type === 'expo') {
+      const ep = this.browserPanes.get(paneId);
+      if (!ep) return;
+      const name = ep.pane.querySelector('.pane-name')?.value || 'Expo';
+      await this.createExpoPanePreview({ name: name + ' (copy)', url: ep.url, showQR: ep.showQR });
+    }
+  }
+
+  // ==========================================
+  // Toast Notifications
+  // ==========================================
+  showToast(message, { type = 'info', duration = 3000, icon = null } = {}) {
+    const container = document.getElementById('toast-container');
+    const icons = { success: '\u2713', error: '\u2717', info: '\u2139' };
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.innerHTML = `
+      <span class="toast-icon">${icon || icons[type] || icons.info}</span>
+      <span class="toast-message">${message}</span>
+      <button class="toast-dismiss">&times;</button>
+    `;
+
+    container.appendChild(toast);
+
+    const remove = () => {
+      toast.classList.add('toast-exit');
+      toast.addEventListener('animationend', () => toast.remove());
+    };
+
+    toast.querySelector('.toast-dismiss').addEventListener('click', remove);
+    if (duration > 0) setTimeout(remove, duration);
+
+    return { dismiss: remove };
   }
 
   // ==========================================
@@ -1703,6 +1891,13 @@ class GridTermApp {
   // ==========================================
   showSettings() {
     const modal = document.getElementById('settings-modal');
+    // Keyboard: Esc to close
+    if (this._settingsKeyHandler) document.removeEventListener('keydown', this._settingsKeyHandler);
+    this._settingsKeyHandler = (e) => {
+      if (modal.classList.contains('hidden')) return;
+      if (e.key === 'Escape') this.hideSettings();
+    };
+    document.addEventListener('keydown', this._settingsKeyHandler);
     // Load current settings
     const config = this.appSettings || {};
     document.getElementById('settings-font-size').value = config.fontSize || 14;
@@ -1761,6 +1956,7 @@ class GridTermApp {
     });
 
     this.hideSettings();
+    this.showToast('Settings saved', { type: 'success' });
   }
 
   // ==========================================
@@ -1790,22 +1986,32 @@ class GridTermApp {
     overlay.classList.remove('hidden');
     renderStep();
 
+    const finishOnboarding = () => {
+      overlay.classList.add('hidden');
+      localStorage.setItem('gridterm-onboarded', '1');
+      document.removeEventListener('keydown', onboardingKeyHandler);
+      this.showLaunchModal();
+      this.showWelcomeState();
+    };
+
     const nextHandler = () => {
       currentStep++;
       if (currentStep >= steps.length) {
-        overlay.classList.add('hidden');
-        document.getElementById('onboarding-next').removeEventListener('click', nextHandler);
-        localStorage.setItem('gridterm-onboarded', '1');
+        finishOnboarding();
       } else {
         renderStep();
       }
     };
 
+    const onboardingKeyHandler = (e) => {
+      if (overlay.classList.contains('hidden')) return;
+      if (e.key === 'Enter' || e.key === 'ArrowRight') nextHandler();
+      if (e.key === 'Escape') finishOnboarding();
+    };
+    document.addEventListener('keydown', onboardingKeyHandler);
+
     document.getElementById('onboarding-next').addEventListener('click', nextHandler);
-    document.getElementById('onboarding-skip').addEventListener('click', () => {
-      overlay.classList.add('hidden');
-      localStorage.setItem('gridterm-onboarded', '1');
-    });
+    document.getElementById('onboarding-skip').addEventListener('click', finishOnboarding);
   }
 
   // ==========================================

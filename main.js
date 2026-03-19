@@ -33,18 +33,34 @@ function saveConfig(config) {
 }
 
 function createWindow() {
-  // Get the work area (screen minus menu bar and dock)
   const { workArea } = screen.getPrimaryDisplay();
+  const config = loadConfig();
+  const saved = config.windowBounds;
 
-  // Constrain window size to work area
-  const width = Math.min(1200, workArea.width);
-  const height = Math.min(800, workArea.height);
+  // Use saved bounds if they're on-screen, otherwise default
+  let x, y, width, height;
+  if (saved && saved.width > 0 && saved.height > 0) {
+    // Validate that the saved position is visible on some display
+    const displays = screen.getAllDisplays();
+    const onScreen = displays.some(d =>
+      saved.x < d.bounds.x + d.bounds.width &&
+      saved.x + saved.width > d.bounds.x &&
+      saved.y < d.bounds.y + d.bounds.height &&
+      saved.y + saved.height > d.bounds.y
+    );
+    if (onScreen) {
+      ({ x, y, width, height } = saved);
+    }
+  }
+  if (!width) {
+    width = Math.min(1200, workArea.width);
+    height = Math.min(800, workArea.height);
+    x = workArea.x + Math.floor((workArea.width - width) / 2);
+    y = workArea.y;
+  }
 
   mainWindow = new BrowserWindow({
-    width,
-    height,
-    x: workArea.x + Math.floor((workArea.width - width) / 2),
-    y: workArea.y,
+    width, height, x, y,
     minWidth: 600,
     minHeight: 400,
     titleBarStyle: 'hiddenInset',
@@ -56,6 +72,21 @@ function createWindow() {
       webviewTag: true
     }
   });
+
+  // Persist window bounds on move/resize (debounced)
+  let boundsTimer;
+  const saveBounds = () => {
+    clearTimeout(boundsTimer);
+    boundsTimer = setTimeout(() => {
+      if (mainWindow.isDestroyed()) return;
+      const bounds = mainWindow.getBounds();
+      const cfg = loadConfig();
+      cfg.windowBounds = bounds;
+      saveConfig(cfg);
+    }, 500);
+  };
+  mainWindow.on('resize', saveBounds);
+  mainWindow.on('move', saveBounds);
 
   mainWindow.loadFile('src/index.html');
 }
