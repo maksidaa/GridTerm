@@ -1,5 +1,6 @@
 const { Terminal } = require('xterm');
 const { FitAddon } = require('xterm-addon-fit');
+const { SearchAddon } = require('xterm-addon-search');
 const { BrowserPane } = require('./panes/browser-pane.js');
 const { ExpoPanePreview } = require('./panes/expo-pane.js');
 const { ExpoDashboard } = require('./components/expo-dashboard.js');
@@ -843,6 +844,13 @@ class GridTermApp {
         <button class="expand-btn" title="Expand">⤢</button>
         <button class="close-btn" title="Close">×</button>
       </div>
+      <div class="search-bar hidden">
+        <input class="search-input" placeholder="Find..." autocomplete="off">
+        <span class="search-count"></span>
+        <button class="search-prev" title="Previous">▲</button>
+        <button class="search-next" title="Next">▼</button>
+        <button class="search-close" title="Close search">×</button>
+      </div>
       <div class="terminal-body"></div>
     `;
 
@@ -881,13 +889,15 @@ class GridTermApp {
     });
 
     const fitAddon = new FitAddon();
+    const searchAddon = new SearchAddon();
     xterm.loadAddon(fitAddon);
+    xterm.loadAddon(searchAddon);
     xterm.open(termBody);
 
     // Store terminal info (including launch config for session restore)
     const isAiPane = aiCommand && (aiCommand.includes('claude') || aiCommand.includes('codex'));
     this.terminals.set(id, {
-      xterm, fitAddon, pane,
+      xterm, fitAddon, searchAddon, pane,
       launchConfig: { name, directory, aiCommand, startupCommands },
       osc133: { commands: [], currentState: 'NORMAL', currentCommand: null, partialSeq: '' },
       codeBlocks: isAiPane ? { state: 'NORMAL', currentBlock: null, blocks: [], buffer: '' } : null
@@ -1908,6 +1918,57 @@ class GridTermApp {
     });
   }
 
+  toggleSearchBar(paneId) {
+    const term = this.terminals.get(paneId);
+    if (!term) return;
+
+    const searchBar = term.pane.querySelector('.search-bar');
+    if (!searchBar) return;
+
+    const isHidden = searchBar.classList.contains('hidden');
+    if (isHidden) {
+      searchBar.classList.remove('hidden');
+      const input = searchBar.querySelector('.search-input');
+      input.focus();
+      input.select();
+
+      // Wire search input
+      input.oninput = () => {
+        const query = input.value;
+        if (query) {
+          term.searchAddon.findNext(query);
+        }
+      };
+
+      searchBar.querySelector('.search-next').onclick = () => {
+        if (input.value) term.searchAddon.findNext(input.value);
+      };
+      searchBar.querySelector('.search-prev').onclick = () => {
+        if (input.value) term.searchAddon.findPrevious(input.value);
+      };
+      searchBar.querySelector('.search-close').onclick = () => {
+        this.toggleSearchBar(paneId);
+      };
+
+      input.onkeydown = (e) => {
+        if (e.key === 'Escape') {
+          this.toggleSearchBar(paneId);
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          if (e.shiftKey) {
+            term.searchAddon.findPrevious(input.value);
+          } else {
+            term.searchAddon.findNext(input.value);
+          }
+        }
+      };
+    } else {
+      searchBar.classList.add('hidden');
+      term.searchAddon.clearDecorations();
+      this.focusTerminalSafely(term.xterm);
+    }
+  }
+
   handleTerminalClick(id, e) {
     const term = this.terminals.get(id);
     if (!term || !term.osc133) return;
@@ -2698,6 +2759,15 @@ class GridTermApp {
   setupKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
       const isMeta = e.metaKey || e.ctrlKey;
+
+      // Cmd+F - Search in active terminal
+      if (isMeta && e.key === 'f') {
+        e.preventDefault();
+        if (this.activePaneId && this.terminals.has(this.activePaneId)) {
+          this.toggleSearchBar(this.activePaneId);
+        }
+        return;
+      }
 
       // Cmd+Up - Jump to previous prompt
       if (isMeta && e.key === 'ArrowUp') {

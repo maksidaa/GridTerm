@@ -3717,3 +3717,64 @@ body.pipe-mode #add-terminal {
 .dictation-input:focus {
   border-color: var(--accent-blue);
 }
+
+/* Terminal Search Bar */
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.search-bar.hidden {
+  display: none;
+}
+
+.search-input {
+  flex: 1;
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 3px 8px;
+  outline: none;
+  min-width: 0;
+}
+
+.search-input:focus {
+  border-color: var(--accent-blue);
+}
+
+.search-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.search-prev,
+.search-next,
+.search-close {
+  background: transparent;
+  border: none;
+  color: var(--text-disabled);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  line-height: 1;
+  transition: all 0.15s;
+}
+
+.search-prev:hover,
+.search-next:hover {
+  background: rgba(108, 182, 255, 0.15);
+  color: var(--accent-blue);
+}
+
+.search-close:hover {
+  background: var(--accent-red-bg);
+  color: var(--accent-red);
+}
