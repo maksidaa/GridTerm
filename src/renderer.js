@@ -952,6 +952,11 @@ class GridTermApp {
       return true;
     });
 
+    // Click-to-position in prompt region
+    termBody.addEventListener('click', (e) => {
+      this.handleTerminalClick(id, e);
+    });
+
     // Click to focus terminal
     pane.addEventListener('click', () => {
       this.setActiveTerminal(id);
@@ -1769,6 +1774,62 @@ class GridTermApp {
     }
   }
 
+  handleTerminalClick(id, e) {
+    const term = this.terminals.get(id);
+    if (!term || !term.osc133) return;
+    // Only move cursor when in prompt INPUT state
+    if (term.osc133.currentState !== 'INPUT') return;
+
+    const xterm = term.xterm;
+    const buffer = xterm.buffer.active;
+    const cursorX = buffer.cursorX;
+
+    // Calculate clicked column from mouse position
+    const cellDims = xterm._core._renderService.dimensions;
+    if (!cellDims || !cellDims.css || !cellDims.css.cell) return;
+    const cellWidth = cellDims.css.cell.width;
+    const termRect = term.pane.querySelector('.terminal-body .xterm-screen')?.getBoundingClientRect();
+    if (!termRect) return;
+    const clickCol = Math.floor((e.clientX - termRect.left) / cellWidth);
+
+    // Send arrow keys to move cursor
+    const diff = clickCol - cursorX;
+    if (diff > 0) {
+      window.terminal.write(id, '\x1b[C'.repeat(diff));
+    } else if (diff < 0) {
+      window.terminal.write(id, '\x1b[D'.repeat(-diff));
+    }
+  }
+
+  jumpToPrompt(direction) {
+    if (!this.activePaneId) return;
+    const term = this.terminals.get(this.activePaneId);
+    if (!term || !term.osc133 || term.osc133.commands.length === 0) return;
+
+    const xterm = term.xterm;
+    const buffer = xterm.buffer.active;
+    const currentRow = buffer.baseY + buffer.cursorY;
+
+    const commands = term.osc133.commands;
+    if (direction < 0) {
+      // Find previous prompt
+      for (let i = commands.length - 1; i >= 0; i--) {
+        if (commands[i].promptRow < currentRow) {
+          xterm.scrollToLine(Math.max(0, commands[i].promptRow - 2));
+          return;
+        }
+      }
+    } else {
+      // Find next prompt
+      for (let i = 0; i < commands.length; i++) {
+        if (commands[i].promptRow > currentRow) {
+          xterm.scrollToLine(Math.max(0, commands[i].promptRow - 2));
+          return;
+        }
+      }
+    }
+  }
+
   copyFromTerminal(id) {
     const term = this.terminals.get(id);
     if (!term) return;
@@ -2503,6 +2564,20 @@ class GridTermApp {
   setupKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
       const isMeta = e.metaKey || e.ctrlKey;
+
+      // Cmd+Up - Jump to previous prompt
+      if (isMeta && e.key === 'ArrowUp') {
+        e.preventDefault();
+        this.jumpToPrompt(-1);
+        return;
+      }
+
+      // Cmd+Down - Jump to next prompt
+      if (isMeta && e.key === 'ArrowDown') {
+        e.preventDefault();
+        this.jumpToPrompt(1);
+        return;
+      }
 
       // Cmd+K - Command palette
       if (isMeta && e.key === 'k') {
