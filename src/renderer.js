@@ -27,6 +27,8 @@ class GridTermApp {
     this.activePaneId = null; // Track which pane is focused (replaces activeTerminalId)
     this.activeTerminalId = null; // Keep for backwards compatibility
     this.expoDashboard = null; // Expo dashboard instance
+    this.zenMode = false; // Focus/Zen mode state
+    this.workspacePresets = []; // Saved workspace presets
 
     this.gridContainer = document.getElementById('grid-container');
     this.addButton = document.getElementById('add-terminal');
@@ -137,6 +139,11 @@ class GridTermApp {
       this.showModal('command');
     });
 
+    // Workspace presets
+    document.getElementById('sidebar-save-preset').addEventListener('click', () => {
+      this.saveWorkspacePreset();
+    });
+
     // Expo Dashboard button
     document.getElementById('open-expo-dashboard').addEventListener('click', () => {
       this.showExpoDashboard();
@@ -168,8 +175,10 @@ class GridTermApp {
     this.setupContextMenu();
     this.setupSettings();
 
-    // Load app settings
+    // Load app settings and workspace presets
     this.appSettings = config.appSettings || {};
+    this.workspacePresets = config.workspacePresets || [];
+    this.renderSidebarPresets();
     if (this.appSettings.fontSize) {
       // Will apply when terminals are created
     }
@@ -1325,6 +1334,7 @@ class GridTermApp {
       commands: this.commands,
       directories: this.directories,
       appSettings: this.appSettings,
+      workspacePresets: this.workspacePresets,
       session: this.getSessionData()
     });
   }
@@ -1477,6 +1487,38 @@ class GridTermApp {
     // Refit terminals after layout change
     setTimeout(() => this.fitAllTerminals(), 100);
     this.saveSessionDebounced();
+  }
+
+  toggleZenMode() {
+    this.zenMode = !this.zenMode;
+    const body = document.body;
+
+    if (this.zenMode) {
+      // Save pre-zen state
+      this._preZenSidebar = this.sidebarVisible;
+      this._preZenLayout = this.gridLayout;
+
+      // Hide sidebar, titlebar controls, switch to 1x1
+      body.classList.add('zen-mode');
+      if (this.sidebarVisible) this.toggleSidebar();
+      this.setGridLayout('1');
+
+      // Scroll active pane into view
+      if (this.activePaneId) {
+        const pane = this.terminals.get(this.activePaneId)?.pane ||
+                     this.browserPanes.get(this.activePaneId)?.pane;
+        if (pane) pane.scrollIntoView({ behavior: 'smooth' });
+      }
+
+      this.showToast('Zen mode — ⌘⇧↵ to exit', { type: 'info', duration: 2000 });
+    } else {
+      // Restore pre-zen state
+      body.classList.remove('zen-mode');
+      if (this._preZenSidebar && !this.sidebarVisible) this.toggleSidebar();
+      if (this._preZenLayout) this.setGridLayout(this._preZenLayout);
+    }
+
+    setTimeout(() => this.fitAllTerminals(), 100);
   }
 
   fitAllTerminals() {
@@ -1632,6 +1674,8 @@ class GridTermApp {
 
     // Pane actions
     actions.push({ icon: '➕', label: 'New Pane', hint: 'Open terminal, browser, or Expo', shortcut: '⌘T', action: () => this.showLaunchModal(), category: 'Actions' });
+    actions.push({ icon: '🧘', label: 'Toggle Zen Mode', hint: 'Focus on one pane', shortcut: '⌘⇧↵', action: () => { this.hideCommandPalette(); this.toggleZenMode(); }, category: 'Actions' });
+    actions.push({ icon: '💾', label: 'Save Workspace', hint: 'Save current layout as a preset', action: () => { this.hideCommandPalette(); this.saveWorkspacePreset(); }, category: 'Actions' });
     actions.push({ icon: '⚙', label: 'Settings', hint: 'Font size, theme, preferences', action: () => this.showSettings(), category: 'Actions' });
 
     // Open panes (all types)
@@ -1660,6 +1704,11 @@ class GridTermApp {
     // Commands
     this.commands.forEach(cmd => {
       actions.push({ icon: '⌘', label: cmd.name, hint: cmd.command, action: () => { this.hideCommandPalette(); this.sendToActiveTerminal(cmd.command, false); }, category: 'Commands' });
+    });
+
+    // Workspace presets
+    this.workspacePresets.forEach(preset => {
+      actions.push({ icon: '📐', label: preset.name, hint: `${preset.panes.length} pane${preset.panes.length > 1 ? 's' : ''}`, action: () => { this.hideCommandPalette(); this.loadWorkspacePreset(preset); }, category: 'Workspaces' });
     });
 
     return actions;
@@ -1811,6 +1860,13 @@ class GridTermApp {
         this.showSettings();
         return;
       }
+
+      // Cmd+Shift+Enter - Focus/Zen mode
+      if (isMeta && e.shiftKey && e.key === 'Enter') {
+        e.preventDefault();
+        this.toggleZenMode();
+        return;
+      }
     });
   }
 
@@ -1925,6 +1981,126 @@ class GridTermApp {
       const name = ep.pane.querySelector('.pane-name')?.value || 'Expo';
       await this.createExpoPanePreview({ name: name + ' (copy)', url: ep.url, showQR: ep.showQR });
     }
+  }
+
+  // ==========================================
+  // Workspace Presets
+  // ==========================================
+  async saveWorkspacePreset() {
+    const session = this.getSessionData();
+    if (!session.panes.length) {
+      this.showToast('No panes to save', { type: 'error' });
+      return;
+    }
+
+    // Prompt for name via a simple input
+    const name = await this.promptInput('Save Workspace', 'Workspace name', 'My Workspace');
+    if (!name) return;
+
+    // Add or update preset
+    const existing = this.workspacePresets.findIndex(p => p.name === name);
+    const preset = { name, panes: session.panes, gridLayout: session.gridLayout, savedAt: new Date().toISOString() };
+    if (existing >= 0) {
+      this.workspacePresets[existing] = preset;
+    } else {
+      this.workspacePresets.push(preset);
+    }
+
+    await this.saveConfig();
+    this.renderSidebarPresets();
+    this.showToast(`Workspace "${name}" saved`, { type: 'success' });
+  }
+
+  async loadWorkspacePreset(preset) {
+    // Close all existing panes
+    for (const [id, info] of Array.from(this.allPanes.entries())) {
+      if (info.type === 'terminal') this.closeTerminal(id);
+      else this.closeBrowserPane(id);
+    }
+
+    // Restore from preset
+    await this.restoreSession({
+      panes: preset.panes,
+      gridLayout: preset.gridLayout,
+      sidebarVisible: this.sidebarVisible,
+      activePaneIndex: 0
+    });
+
+    this.showToast(`Loaded "${preset.name}"`, { type: 'info' });
+  }
+
+  deleteWorkspacePreset(index) {
+    const name = this.workspacePresets[index]?.name;
+    this.workspacePresets.splice(index, 1);
+    this.saveConfig();
+    this.renderSidebarPresets();
+    this.showToast(`"${name}" deleted`, { type: 'info' });
+  }
+
+  renderSidebarPresets() {
+    const container = document.getElementById('sidebar-presets');
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (this.workspacePresets.length === 0) {
+      container.innerHTML = '<div class="sidebar-empty-hint">Save your current layout as a preset</div>';
+      return;
+    }
+
+    this.workspacePresets.forEach((preset, index) => {
+      const item = document.createElement('div');
+      item.className = 'sidebar-item';
+      item.innerHTML = `
+        <span class="item-icon">📐</span>
+        <span class="item-name">${preset.name}</span>
+        <span class="preset-pane-count">${preset.panes.length}</span>
+        <span class="item-delete" data-index="${index}">×</span>
+      `;
+      item.addEventListener('click', (e) => {
+        if (e.target.classList.contains('item-delete')) {
+          this.deleteWorkspacePreset(parseInt(e.target.dataset.index));
+        } else {
+          this.loadWorkspacePreset(preset);
+        }
+      });
+      container.appendChild(item);
+    });
+  }
+
+  promptInput(title, placeholder, defaultValue = '') {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'modal';
+      overlay.innerHTML = `
+        <div class="modal-content" style="max-width: 360px;">
+          <h3>${title}</h3>
+          <input type="text" id="prompt-input" placeholder="${placeholder}" value="${defaultValue}" style="margin-bottom: 12px;">
+          <div class="modal-buttons">
+            <button class="btn-secondary" id="prompt-cancel">Cancel</button>
+            <button class="btn-primary" id="prompt-ok">Save</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+
+      const input = overlay.querySelector('#prompt-input');
+      input.focus();
+      input.select();
+
+      const cleanup = (value) => {
+        document.removeEventListener('keydown', keyHandler);
+        overlay.remove();
+        resolve(value);
+      };
+
+      const keyHandler = (e) => {
+        if (e.key === 'Escape') cleanup(null);
+        if (e.key === 'Enter') cleanup(input.value.trim() || null);
+      };
+      document.addEventListener('keydown', keyHandler);
+      overlay.querySelector('#prompt-cancel').addEventListener('click', () => cleanup(null));
+      overlay.querySelector('#prompt-ok').addEventListener('click', () => cleanup(input.value.trim() || null));
+    });
   }
 
   // ==========================================

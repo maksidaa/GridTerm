@@ -2574,6 +2574,42 @@ body {
   font-size: 10px;
 }
 
+/* Zen Mode */
+body.zen-mode #titlebar {
+  height: 0;
+  overflow: hidden;
+  border: none;
+}
+
+body.zen-mode #sidebar {
+  width: 0 !important;
+  overflow: hidden;
+}
+
+body.zen-mode #add-terminal {
+  display: none;
+}
+
+body.zen-mode #grid-container {
+  padding: 0;
+  gap: 0;
+}
+
+body.zen-mode .terminal-pane,
+body.zen-mode .browser-pane {
+  border-radius: 0;
+}
+
+/* Preset pane count badge */
+.preset-pane-count {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-active);
+  padding: 1px 5px;
+  border-radius: 8px;
+  margin-left: auto;
+}
+
 /* Toast Notifications */
 #toast-container {
   position: fixed;
