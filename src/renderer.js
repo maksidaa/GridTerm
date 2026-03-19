@@ -32,6 +32,7 @@ class GridTermApp {
     this.pipes = new Map(); // Pipe connections: pipeId → { sourceId, targetId, filter, active, _buffer, _flushTimer }
     this.pipeMode = false;
     this.pipeCounter = 0;
+    this.recentActions = JSON.parse(localStorage.getItem('gridterm-recent-actions') || '[]');
 
     this.gridContainer = document.getElementById('grid-container');
     this.addButton = document.getElementById('add-terminal');
@@ -972,6 +973,7 @@ class GridTermApp {
     }, 50);
 
     this.saveSessionDebounced();
+    return id;
   }
 
   delay(ms) {
@@ -1733,6 +1735,8 @@ class GridTermApp {
     actions.push({ icon: '➕', label: 'New Pane', hint: 'Open terminal, browser, or Expo', shortcut: '⌘T', action: () => this.showLaunchModal(), category: 'Actions' });
     actions.push({ icon: '🧘', label: 'Toggle Zen Mode', hint: 'Focus on one pane', shortcut: '⌘⇧↵', action: () => { this.hideCommandPalette(); this.toggleZenMode(); }, category: 'Actions' });
     actions.push({ icon: '⚡', label: 'Toggle Pipe Mode', hint: 'Connect pane outputs to inputs', shortcut: '⌘⇧P', action: () => { this.hideCommandPalette(); this.togglePipeMode(); }, category: 'Actions' });
+    actions.push({ icon: '📊', label: 'Pipe Flow Dashboard', hint: 'View all pipes, stats, orchestration', action: () => { this.hideCommandPalette(); this.showPipeFlowDashboard(); }, category: 'Actions' });
+    actions.push({ icon: '📡', label: 'Broadcast to AI', hint: 'Send same prompt to all AI panes', shortcut: '⌘⇧B', action: () => { this.hideCommandPalette(); this.showBroadcastPrompt(); }, category: 'Actions' });
     actions.push({ icon: '💾', label: 'Save Workspace', hint: 'Save current layout as a preset', action: () => { this.hideCommandPalette(); this.saveWorkspacePreset(); }, category: 'Actions' });
     actions.push({ icon: '⚙', label: 'Settings', hint: 'Font size, theme, preferences', action: () => this.showSettings(), category: 'Actions' });
 
@@ -1777,7 +1781,20 @@ class GridTermApp {
     const actions = this.getPaletteActions();
     const q = query.toLowerCase().trim();
 
-    const filtered = q ? actions.filter(a => a.label.toLowerCase().includes(q) || (a.hint && a.hint.toLowerCase().includes(q))) : actions;
+    let filtered;
+    if (q) {
+      // Fuzzy search with scoring
+      filtered = actions.map(a => ({
+        ...a,
+        score: Math.max(this.fuzzyScore(q, a.label), this.fuzzyScore(q, a.hint || '') * 0.8)
+      })).filter(a => a.score > 0).sort((a, b) => b.score - a.score);
+    } else {
+      // Show recent actions first when no query
+      const recentSet = new Set(this.recentActions.slice(0, 5));
+      const recentItems = actions.filter(a => recentSet.has(a.label)).map(a => ({ ...a, isRecent: true, category: 'Recent' }));
+      const rest = actions.filter(a => !recentSet.has(a.label));
+      filtered = [...recentItems, ...rest];
+    }
 
     if (filtered.length === 0) {
       container.innerHTML = '<div class="palette-empty">No results found</div>';
@@ -1802,10 +1819,12 @@ class GridTermApp {
         <span class="palette-icon">${item.icon}</span>
         <span class="palette-label">${item.label}</span>
         ${item.hint ? `<span class="palette-hint">${item.hint}</span>` : ''}
+        ${item.isRecent ? `<span class="palette-recent-badge">recent</span>` : ''}
         ${item.shortcut ? `<span class="palette-shortcut">${item.shortcut}</span>` : ''}
       `;
       el.addEventListener('click', () => {
         this.hideCommandPalette();
+        this.trackRecentAction(item.label);
         item.action();
       });
       container.appendChild(el);
@@ -1916,6 +1935,13 @@ class GridTermApp {
       if (isMeta && e.key === ',') {
         e.preventDefault();
         this.showSettings();
+        return;
+      }
+
+      // Cmd+Shift+B - Broadcast to AI
+      if (isMeta && e.shiftKey && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault();
+        this.showBroadcastPrompt();
         return;
       }
 
@@ -2342,7 +2368,7 @@ class GridTermApp {
     }
 
     const id = `pipe-${++this.pipeCounter}`;
-    const pipe = { id, sourceId, targetId, filter, active: true, _buffer: '', _flushTimer: null };
+    const pipe = { id, sourceId, targetId, filter, active: true, _buffer: '', _flushTimer: null, stats: { messageCount: 0, bytesForwarded: 0, lastActivity: null, created: Date.now() } };
     this.pipes.set(id, pipe);
 
     if (this.pipeMode) {
@@ -2478,6 +2504,10 @@ class GridTermApp {
     if (targetInfo.type === 'terminal') {
       window.terminal.write(pipe.targetId, data);
     }
+    // Update stats
+    pipe.stats.messageCount++;
+    pipe.stats.bytesForwarded += data.length;
+    pipe.stats.lastActivity = Date.now();
   }
 
   flashPipeCurve(pipeId) {
@@ -2768,6 +2798,332 @@ class GridTermApp {
     } else {
       this.showToast('Pipes already exist', { type: 'info' });
     }
+  }
+
+  // ==========================================
+  // Pipe Flow Dashboard
+  // ==========================================
+
+  showPipeFlowDashboard() {
+    const modal = document.getElementById('pipe-flow-modal');
+    modal.classList.remove('hidden');
+    this.renderFlowDashboard();
+
+    if (this._flowDashKeyHandler) document.removeEventListener('keydown', this._flowDashKeyHandler);
+    this._flowDashKeyHandler = (e) => {
+      if (e.key === 'Escape') this.hidePipeFlowDashboard();
+    };
+    document.addEventListener('keydown', this._flowDashKeyHandler);
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) this.hidePipeFlowDashboard();
+    });
+
+    // Auto-refresh stats while open
+    this._flowDashRefresh = setInterval(() => {
+      if (!modal.classList.contains('hidden')) this.renderFlowDashboard();
+    }, 2000);
+  }
+
+  hidePipeFlowDashboard() {
+    document.getElementById('pipe-flow-modal').classList.add('hidden');
+    if (this._flowDashKeyHandler) document.removeEventListener('keydown', this._flowDashKeyHandler);
+    clearInterval(this._flowDashRefresh);
+  }
+
+  renderFlowDashboard() {
+    const content = document.querySelector('.flow-dashboard-content');
+    if (!content) return;
+
+    const totalMsgs = Array.from(this.pipes.values()).reduce((s, p) => s + (p.stats?.messageCount || 0), 0);
+    const totalBytes = Array.from(this.pipes.values()).reduce((s, p) => s + (p.stats?.bytesForwarded || 0), 0);
+    const fmtBytes = (b) => b < 1024 ? `${b} B` : `${(b / 1024).toFixed(1)} KB`;
+    const timeAgo = (ts) => {
+      if (!ts) return 'never';
+      const s = Math.floor((Date.now() - ts) / 1000);
+      if (s < 5) return 'just now';
+      if (s < 60) return `${s}s ago`;
+      if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+      return `${Math.floor(s / 3600)}h ago`;
+    };
+
+    const fLabels = { passthrough: '⇢ pass', errors: '⚠ errors', debounced: '⏱ buffer', prompt: '💬 prompt', regex: '/./ regex' };
+
+    let pipesHtml = '';
+    if (this.pipes.size === 0) {
+      pipesHtml = '<div class="flow-empty">No pipes configured. Enter Pipe Mode (⌘⇧P) to connect panes.</div>';
+    } else {
+      for (const [pipeId, pipe] of this.pipes) {
+        const src = this.getPaneName(pipe.sourceId);
+        const tgt = this.getPaneName(pipe.targetId);
+        const st = pipe.stats || {};
+        const paused = !pipe.active;
+        pipesHtml += `
+          <div class="flow-pipe-row${paused ? ' paused' : ''}" data-pipe-id="${pipeId}">
+            <div class="flow-node source" title="${src}">${src}</div>
+            <div class="flow-connection">
+              <div class="flow-line"></div>
+              <div class="flow-filter-tag">${fLabels[pipe.filter.type] || pipe.filter.type}</div>
+              <div class="flow-line"></div>
+            </div>
+            <div class="flow-node target" title="${tgt}">${tgt}</div>
+            <div class="flow-pipe-stats">
+              <span>${st.messageCount || 0} msgs</span>
+              <span>${fmtBytes(st.bytesForwarded || 0)}</span>
+              <span>${timeAgo(st.lastActivity)}</span>
+            </div>
+            <div class="flow-pipe-actions">
+              <button class="flow-pause-btn" title="${paused ? 'Resume' : 'Pause'}" data-pipe-id="${pipeId}">${paused ? '▶' : '⏸'}</button>
+              <button class="flow-edit-btn" title="Edit filter" data-pipe-id="${pipeId}">⚙</button>
+              <button class="flow-delete-btn" title="Delete" data-pipe-id="${pipeId}">×</button>
+            </div>
+          </div>`;
+      }
+    }
+
+    const orchPresets = this.getOrchestrationPresets();
+
+    content.innerHTML = `
+      <div class="flow-dashboard">
+        <div class="flow-header">
+          <h3>⚡ Pipe Flow Dashboard</h3>
+          <span class="flow-stats">${this.pipes.size} pipe${this.pipes.size !== 1 ? 's' : ''} · ${totalMsgs} msgs · ${fmtBytes(totalBytes)}</span>
+          <button class="flow-close" title="Close">×</button>
+        </div>
+        <div class="flow-pipes">${pipesHtml}</div>
+        <div class="flow-section-title">Quick Actions</div>
+        <div class="flow-action-buttons">
+          <button class="flow-action-btn" data-action="pipe-mode">⚡ Pipe Mode</button>
+          <button class="flow-action-btn" data-action="broadcast">📡 Broadcast Prompt</button>
+          <button class="flow-action-btn" data-action="clear-all" ${this.pipes.size === 0 ? 'disabled' : ''}>🗑 Clear All</button>
+        </div>
+        ${orchPresets.length > 0 ? `
+          <div class="flow-section-title">Orchestration Workflows</div>
+          <div class="flow-orch-grid">
+            ${orchPresets.map(p => `
+              <div class="orch-card" data-orch="${p.id}">
+                <div class="orch-card-header">
+                  <span class="orch-icon">${p.icon}</span>
+                  <span class="orch-title">${p.name}</span>
+                </div>
+                <div class="orch-desc">${p.description}</div>
+                <div class="orch-flow">${p.flow}</div>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+      </div>`;
+
+    // Wire up events
+    content.querySelector('.flow-close')?.addEventListener('click', () => this.hidePipeFlowDashboard());
+
+    content.querySelectorAll('.flow-pause-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.togglePipePause(btn.dataset.pipeId);
+        this.renderFlowDashboard();
+      });
+    });
+    content.querySelectorAll('.flow-edit-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.hidePipeFlowDashboard();
+        if (!this.pipeMode) this.togglePipeMode();
+        setTimeout(() => this.showPipeFilterEditor(btn.dataset.pipeId, e), 200);
+      });
+    });
+    content.querySelectorAll('.flow-delete-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.deletePipe(btn.dataset.pipeId);
+        this.renderFlowDashboard();
+      });
+    });
+
+    content.querySelectorAll('.flow-action-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const action = btn.dataset.action;
+        if (action === 'pipe-mode') { this.hidePipeFlowDashboard(); this.togglePipeMode(); }
+        else if (action === 'broadcast') { this.hidePipeFlowDashboard(); this.showBroadcastPrompt(); }
+        else if (action === 'clear-all') { this.clearAllPipes(); this.renderFlowDashboard(); }
+      });
+    });
+
+    content.querySelectorAll('.orch-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const preset = orchPresets.find(p => p.id === card.dataset.orch);
+        if (preset) { this.hidePipeFlowDashboard(); this.launchOrchestration(preset); }
+      });
+    });
+  }
+
+  togglePipePause(pipeId) {
+    const pipe = this.pipes.get(pipeId);
+    if (pipe) {
+      pipe.active = !pipe.active;
+      if (this.pipeMode) this.renderPipeCurves();
+      this.renderSidebarPipes();
+      this.showToast(pipe.active ? 'Pipe resumed' : 'Pipe paused', { type: 'info' });
+      this.saveSessionDebounced();
+    }
+  }
+
+  clearAllPipes() {
+    for (const [, pipe] of this.pipes) { clearTimeout(pipe._flushTimer); }
+    this.pipes.clear();
+    this.pipeCounter = 0;
+    if (this.pipeMode) this.renderPipeCurves();
+    this.renderSidebarPipes();
+    this.saveSessionDebounced();
+    this.showToast('All pipes cleared', { type: 'info' });
+  }
+
+  // ==========================================
+  // AI Orchestration
+  // ==========================================
+
+  getOrchestrationPresets() {
+    return [
+      {
+        id: 'claude-codex-review', icon: '🤖', name: 'Claude + Codex Review',
+        description: 'Claude implements, Codex reviews the output',
+        flow: 'Claude ──prompt──→ Codex',
+        create: async () => {
+          const dir = this.directories.length > 0 ? this.directories[0].path : null;
+          const claudeId = await this.createTerminal({ name: 'Claude (Implement)', directory: dir, aiCommand: 'claude --dangerously-skip-permissions', startupCommands: [] });
+          const codexId = await this.createTerminal({ name: 'Codex (Review)', directory: dir, aiCommand: 'codex --full-auto', startupCommands: [] });
+          this.createPipe(claudeId, codexId, { type: 'prompt', delay: 10000, template: 'Review this Claude output for correctness and edge cases:\n---\n{data}\n---' });
+        }
+      },
+      {
+        id: 'parallel-ai', icon: '⚡', name: 'Parallel AI Compare',
+        description: 'Claude and Codex side by side — compare approaches',
+        flow: 'Claude ∥ Codex (same dir)',
+        create: async () => {
+          const dir = this.directories.length > 0 ? this.directories[0].path : null;
+          await this.createTerminal({ name: 'Claude', directory: dir, aiCommand: 'claude --dangerously-skip-permissions', startupCommands: [] });
+          await this.createTerminal({ name: 'Codex', directory: dir, aiCommand: 'codex --full-auto', startupCommands: [] });
+          this.showToast('Use 📡 Broadcast (⌘⇧B) to send same prompt to both', { type: 'info', duration: 5000 });
+        }
+      },
+      {
+        id: 'error-watch', icon: '🔧', name: 'Watch & Fix',
+        description: 'Dev server errors auto-forwarded to Claude',
+        flow: 'Terminal ──errors──→ Claude',
+        create: async () => {
+          const dir = this.directories.length > 0 ? this.directories[0].path : null;
+          const devId = await this.createTerminal({ name: 'Dev Server', directory: dir, aiCommand: '', startupCommands: [] });
+          const claudeId = await this.createTerminal({ name: 'Claude (Fixer)', directory: dir, aiCommand: 'claude --dangerously-skip-permissions', startupCommands: [] });
+          this.createPipe(devId, claudeId, { type: 'prompt', delay: 5000, template: 'Error from dev server:\n---\n{data}\n---\nPlease analyze and suggest a fix.' });
+        }
+      },
+      {
+        id: 'error-chain', icon: '🔗', name: 'Error Chain',
+        description: 'Errors → Claude fix → Codex verify — triple check',
+        flow: 'Terminal ──→ Claude ──→ Codex',
+        create: async () => {
+          const dir = this.directories.length > 0 ? this.directories[0].path : null;
+          const srcId = await this.createTerminal({ name: 'Source', directory: dir, aiCommand: '', startupCommands: [] });
+          const claudeId = await this.createTerminal({ name: 'Claude (Fix)', directory: dir, aiCommand: 'claude --dangerously-skip-permissions', startupCommands: [] });
+          const codexId = await this.createTerminal({ name: 'Codex (Verify)', directory: dir, aiCommand: 'codex --full-auto', startupCommands: [] });
+          this.createPipe(srcId, claudeId, { type: 'errors' });
+          this.createPipe(claudeId, codexId, { type: 'prompt', delay: 10000, template: 'Verify this Claude fix is correct:\n---\n{data}\n---' });
+        }
+      }
+    ];
+  }
+
+  async launchOrchestration(preset) {
+    this.showToast(`Launching "${preset.name}"...`, { type: 'info' });
+    await preset.create();
+    this.showToast(`"${preset.name}" ready`, { type: 'success' });
+  }
+
+  // ==========================================
+  // Broadcast
+  // ==========================================
+
+  showBroadcastPrompt() {
+    const aiPanes = [];
+    for (const [id, info] of this.allPanes) {
+      if (info.type !== 'terminal') continue;
+      const term = this.terminals.get(id);
+      const ai = term?.launchConfig?.aiCommand;
+      if (ai?.includes('claude') || ai?.includes('codex')) {
+        const name = term.pane.querySelector('.terminal-name')?.value || 'AI';
+        aiPanes.push({ id, name });
+      }
+    }
+
+    if (aiPanes.length === 0) {
+      this.showToast('No AI panes open to broadcast to', { type: 'error' });
+      return;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'broadcast-overlay';
+    overlay.innerHTML = `
+      <div class="broadcast-box">
+        <div class="broadcast-header">
+          <span class="broadcast-title">📡 Broadcast to AI Panes</span>
+          <span class="broadcast-targets">${aiPanes.map(p => p.name).join(', ')}</span>
+        </div>
+        <textarea class="broadcast-input" placeholder="Type your prompt — Cmd+Enter to send to all AI panes..." autofocus></textarea>
+        <div class="broadcast-actions">
+          <button class="btn-secondary" id="broadcast-cancel">Cancel</button>
+          <button class="btn-primary" id="broadcast-send">Send to All (${aiPanes.length})</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const input = overlay.querySelector('.broadcast-input');
+    setTimeout(() => input.focus(), 50);
+
+    const cleanup = () => {
+      document.removeEventListener('keydown', keyHandler);
+      overlay.remove();
+    };
+    const send = () => {
+      const text = input.value.trim();
+      if (!text) return;
+      cleanup();
+      for (const { id } of aiPanes) {
+        window.terminal.write(id, text + '\n');
+      }
+      this.showToast(`Broadcast sent to ${aiPanes.length} pane${aiPanes.length > 1 ? 's' : ''}`, { type: 'success' });
+    };
+    const keyHandler = (e) => {
+      if (e.key === 'Escape') cleanup();
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
+    };
+    document.addEventListener('keydown', keyHandler);
+    overlay.querySelector('#broadcast-cancel').addEventListener('click', cleanup);
+    overlay.querySelector('#broadcast-send').addEventListener('click', send);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
+  }
+
+  // ==========================================
+  // Fuzzy Search & Recent Actions
+  // ==========================================
+
+  fuzzyScore(query, text) {
+    if (!text) return 0;
+    const q = query.toLowerCase();
+    const t = text.toLowerCase();
+    if (t === q) return 100;
+    if (t.startsWith(q)) return 90;
+    if (t.includes(q)) return 70;
+    let qi = 0;
+    for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+      if (t[ti] === q[qi]) qi++;
+    }
+    if (qi === q.length) return Math.max(50 - (t.length - q.length), 10);
+    return 0;
+  }
+
+  trackRecentAction(label) {
+    this.recentActions = [label, ...this.recentActions.filter(a => a !== label)].slice(0, 10);
+    localStorage.setItem('gridterm-recent-actions', JSON.stringify(this.recentActions));
   }
 
   // ==========================================
