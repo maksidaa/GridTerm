@@ -285,8 +285,10 @@ class GridTermApp {
       this.fitAllTerminals();
     });
 
-    // Create default tab
+    // Create default tab and render tab bar
     this.activeTabId = this.createTab({ name: 'Default' });
+    this.renderTabBar();
+    document.getElementById('tab-bar-add').addEventListener('click', () => this.addNewTab());
 
     // Show onboarding on first run, restore session, or show launch modal
     if (!localStorage.getItem('gridterm-onboarded')) {
@@ -389,6 +391,9 @@ class GridTermApp {
     const container = document.getElementById('sidebar-panes');
     if (!container) return;
     container.innerHTML = '';
+
+    // Update tab bar pane counts too
+    this.renderTabBar();
 
     const tabPaneIds = this.getActiveTabPanes();
     if (tabPaneIds.length === 0) {
@@ -1169,6 +1174,13 @@ class GridTermApp {
 
     this.activePaneId = id;
 
+    // Update tab's active pane
+    const tabId = this.paneToTab.get(id);
+    if (tabId) {
+      const tab = this.tabs.get(tabId);
+      if (tab) tab.activePaneId = id;
+    }
+
     // Check if it's a terminal
     const term = this.terminals.get(id);
     if (term) {
@@ -1702,6 +1714,211 @@ class GridTermApp {
     return detached;
   }
 
+  renderTabBar() {
+    const container = document.getElementById('tab-bar-tabs');
+    if (!container) return;
+    container.innerHTML = '';
+
+    for (const tabId of this.tabOrder) {
+      const tab = this.tabs.get(tabId);
+      if (!tab) continue;
+
+      const paneCount = this.getTabPanes(tabId).length;
+      const isActive = tabId === this.activeTabId;
+
+      const tabEl = document.createElement('div');
+      tabEl.className = `tab-item${isActive ? ' active' : ''}`;
+      tabEl.dataset.tabId = tabId;
+      tabEl.innerHTML = `
+        <span class="tab-name">${tab.name}</span>
+        <span class="tab-pane-count">${paneCount}</span>
+        <button class="tab-close-btn" title="Close Tab">×</button>
+      `;
+
+      // Click to switch
+      tabEl.addEventListener('click', (e) => {
+        if (e.target.classList.contains('tab-close-btn')) return;
+        if (tabId !== this.activeTabId) this.switchToTab(tabId);
+      });
+
+      // Double-click to rename
+      tabEl.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        this.startTabRename(tabId, tabEl);
+      });
+
+      // Close button
+      tabEl.querySelector('.tab-close-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.closeTab(tabId);
+      });
+
+      container.appendChild(tabEl);
+    }
+  }
+
+  startTabRename(tabId, tabEl) {
+    const tab = this.tabs.get(tabId);
+    if (!tab) return;
+    const nameSpan = tabEl.querySelector('.tab-name');
+    const input = document.createElement('input');
+    input.className = 'tab-rename-input';
+    input.value = tab.name;
+    nameSpan.replaceWith(input);
+    input.focus();
+    input.select();
+
+    const finish = () => {
+      const newName = input.value.trim() || tab.name;
+      tab.name = newName;
+      const span = document.createElement('span');
+      span.className = 'tab-name';
+      span.textContent = newName;
+      input.replaceWith(span);
+      this.saveSessionDebounced();
+    };
+
+    input.addEventListener('blur', finish);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      if (e.key === 'Escape') { input.value = tab.name; input.blur(); }
+    });
+  }
+
+  async addNewTab() {
+    const result = await window.dialog.selectFolder();
+    if (!result || result.canceled || !result.filePaths?.[0]) return;
+
+    const dirPath = result.filePaths[0];
+    const name = dirPath.split('/').pop() || 'New Tab';
+
+    const tabId = this.createTab({ name, directory: dirPath });
+    this.switchToTab(tabId);
+    this.renderTabBar();
+
+    // Open a terminal in the new tab with the selected directory
+    await this.createTerminal({ directory: dirPath });
+  }
+
+  switchToTab(tabId) {
+    if (tabId === this.activeTabId) return;
+
+    const oldTabId = this.activeTabId;
+
+    // Save scroll position for old tab
+    if (oldTabId) {
+      this.tabScrollPositions.set(oldTabId, this.gridContainer.scrollTop);
+    }
+
+    // Hide old tab panes
+    if (oldTabId) {
+      for (const paneId of this.getTabPanes(oldTabId)) {
+        const info = this.allPanes.get(paneId);
+        if (!info) continue;
+        const el = info.type === 'terminal'
+          ? this.terminals.get(paneId)?.pane
+          : this.browserPanes.get(paneId)?.pane;
+        if (el) el.style.display = 'none';
+      }
+    }
+
+    // Set new active tab
+    this.activeTabId = tabId;
+
+    // Show new tab panes
+    for (const paneId of this.getTabPanes(tabId)) {
+      const info = this.allPanes.get(paneId);
+      if (!info) continue;
+      const el = info.type === 'terminal'
+        ? this.terminals.get(paneId)?.pane
+        : this.browserPanes.get(paneId)?.pane;
+      if (el) el.style.display = '';
+    }
+
+    // Restore scroll position
+    this.gridContainer.scrollTop = this.tabScrollPositions.get(tabId) || 0;
+
+    // Update layout and fit
+    this.updateGridLayout();
+    requestAnimationFrame(() => this.fitAllTerminals());
+
+    // Restore active pane
+    const tab = this.tabs.get(tabId);
+    if (tab?.activePaneId && this.allPanes.has(tab.activePaneId)) {
+      this.setActivePaneId(tab.activePaneId);
+    } else {
+      const tabPanes = this.getTabPanes(tabId);
+      if (tabPanes.length > 0) this.setActivePaneId(tabPanes[0]);
+    }
+
+    // Update sidebar and tab bar
+    this.renderSidebarPanes();
+    this.renderTabBar();
+
+    // Re-render pipes if in pipe mode
+    if (this.pipeMode) {
+      this.renderPipePorts();
+      this.renderPipeCurves();
+    }
+
+    this.saveSessionDebounced();
+  }
+
+  switchToAdjacentTab(direction) {
+    if (this.tabOrder.length <= 1) return;
+    const currentIdx = this.tabOrder.indexOf(this.activeTabId);
+    let nextIdx = currentIdx + direction;
+    if (nextIdx < 0) nextIdx = this.tabOrder.length - 1;
+    if (nextIdx >= this.tabOrder.length) nextIdx = 0;
+    this.switchToTab(this.tabOrder[nextIdx]);
+  }
+
+  closeTab(tabId) {
+    const tabPanes = this.getTabPanes(tabId);
+
+    // If tab has panes, show confirmation
+    if (tabPanes.length > 0) {
+      const count = tabPanes.length;
+      // Inline confirmation via toast-style approach
+      if (!confirm(`Close tab "${this.tabs.get(tabId)?.name}" with ${count} pane${count > 1 ? 's' : ''}?`)) {
+        return;
+      }
+      // Close all panes in the tab
+      for (const paneId of [...tabPanes]) {
+        const info = this.allPanes.get(paneId);
+        if (info?.type === 'terminal') {
+          this.closeTerminal(paneId);
+        } else {
+          this.closeBrowserPane(paneId);
+        }
+      }
+    }
+
+    // Switch to adjacent tab before deleting
+    if (this.activeTabId === tabId) {
+      const idx = this.tabOrder.indexOf(tabId);
+      const nextIdx = idx > 0 ? idx - 1 : (this.tabOrder.length > 1 ? 1 : -1);
+      if (nextIdx >= 0 && this.tabOrder[nextIdx] !== tabId) {
+        this.switchToTab(this.tabOrder[nextIdx]);
+      }
+    }
+
+    this.deleteTab(tabId);
+
+    // If no tabs left, create a new default
+    if (this.tabOrder.length === 0) {
+      this.activeTabId = this.createTab({ name: 'Default' });
+      this.showLaunchModal();
+    }
+
+    this.renderTabBar();
+    this.saveSessionDebounced();
+  }
+
+  closeActiveTab() {
+    if (this.activeTabId) this.closeTab(this.activeTabId);
+  }
+
   updateGridLayout() {
     // Count only VISIBLE panes in active tab (not minimized/hidden ones)
     const tabPaneIds = this.getActiveTabPanes();
@@ -2163,6 +2380,27 @@ class GridTermApp {
       if (isMeta && e.shiftKey && e.key === 'Enter') {
         e.preventDefault();
         this.toggleZenMode();
+        return;
+      }
+
+      // Cmd+Shift+[ - Previous tab
+      if (isMeta && e.shiftKey && e.code === 'BracketLeft') {
+        e.preventDefault();
+        this.switchToAdjacentTab(-1);
+        return;
+      }
+
+      // Cmd+Shift+] - Next tab
+      if (isMeta && e.shiftKey && e.code === 'BracketRight') {
+        e.preventDefault();
+        this.switchToAdjacentTab(1);
+        return;
+      }
+
+      // Cmd+Shift+W - Close active tab
+      if (isMeta && e.shiftKey && (e.key === 'w' || e.key === 'W')) {
+        e.preventDefault();
+        this.closeActiveTab();
         return;
       }
     });
