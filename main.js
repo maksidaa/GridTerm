@@ -194,6 +194,35 @@ function getShellEnv() {
   return env;
 }
 
+// Shell integration scripts for OSC 133 prompt boundary markers
+function getShellIntegrationScript(shell) {
+  const shellName = (shell || '').split('/').pop();
+  if (shellName === 'zsh') {
+    return `
+__gridterm_precmd() { printf '\\e]133;A\\a'; }
+__gridterm_preexec() { printf '\\e]133;C\\a'; }
+precmd_functions+=(__gridterm_precmd)
+preexec_functions+=(__gridterm_preexec)
+PROMPT="%{\$(printf '\\e]133;B\\a')%}$PROMPT"
+__gridterm_trapExit() { printf '\\e]133;D;%?\\a'; }
+add-zsh-hook precmd __gridterm_trapExit 2>/dev/null
+`;
+  } else if (shellName === 'bash') {
+    return `
+__gridterm_prompt_cmd() { printf '\\e]133;A\\a'; }
+trap 'printf "\\e]133;C\\a"' DEBUG
+PROMPT_COMMAND="__gridterm_prompt_cmd;\${PROMPT_COMMAND}"
+PS1="\\[\\e]133;B\\a\\]$PS1"
+`;
+  } else if (shellName === 'fish') {
+    return `
+function __gridterm_prompt --on-event fish_prompt; printf '\\e]133;A\\a'; end
+function __gridterm_preexec --on-event fish_preexec; printf '\\e]133;C\\a'; end
+`;
+  }
+  return '';
+}
+
 // Terminal IPC handlers
 ipcMain.handle('terminal:create', (event, id) => {
   const shell = process.env.SHELL || '/bin/zsh';
@@ -220,6 +249,16 @@ ipcMain.handle('terminal:create', (event, id) => {
       mainWindow.webContents.send('terminal:exit', id);
     }
   });
+
+  // Inject shell integration for OSC 133 prompt boundaries
+  const integrationScript = getShellIntegrationScript(shell);
+  if (integrationScript) {
+    setTimeout(() => {
+      if (terminals.has(id)) {
+        term.write(integrationScript);
+      }
+    }, 300);
+  }
 
   return true;
 });

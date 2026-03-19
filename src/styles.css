@@ -548,6 +548,25 @@ body {
   margin-right: -2px;
 }
 
+.header-activity-dot.status-success {
+  background: var(--accent-green);
+}
+
+.header-activity-dot.status-error {
+  background: var(--accent-red);
+  box-shadow: 0 0 4px var(--accent-red);
+}
+
+.header-activity-dot.status-running {
+  background: var(--accent-blue);
+  animation: statusPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
 /* Empty State Hints */
 .sidebar-empty-hint {
   font-size: 11px;

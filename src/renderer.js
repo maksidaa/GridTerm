@@ -76,10 +76,11 @@ class GridTermApp {
       window.terminal.onData((id, data) => {
         const term = this.terminals.get(id);
         if (term) {
-          term.xterm.write(data);
-          this.detectPaneContext(id, data);
+          const cleanData = this.parseOSC133(id, data);
+          term.xterm.write(cleanData);
+          this.detectPaneContext(id, cleanData);
           this.markPaneActive(id);
-          this.forwardPipeData(id, data);
+          this.forwardPipeData(id, cleanData);
         }
       });
 
@@ -880,7 +881,11 @@ class GridTermApp {
     xterm.open(termBody);
 
     // Store terminal info (including launch config for session restore)
-    this.terminals.set(id, { xterm, fitAddon, pane, launchConfig: { name, directory, aiCommand, startupCommands } });
+    this.terminals.set(id, {
+      xterm, fitAddon, pane,
+      launchConfig: { name, directory, aiCommand, startupCommands },
+      osc133: { commands: [], currentState: 'NORMAL', currentCommand: null, partialSeq: '' }
+    });
     this.allPanes.set(id, { type: 'terminal', pane: { pane } });
     this.assignPaneToTab(id, this.activeTabId);
 
@@ -1675,6 +1680,92 @@ class GridTermApp {
     // If no panes left, show launch modal
     if (this.allPanes.size === 0) {
       this.showLaunchModal();
+    }
+  }
+
+  parseOSC133(id, data) {
+    const term = this.terminals.get(id);
+    if (!term || !term.osc133) return data;
+
+    const osc = term.osc133;
+    let input = osc.partialSeq + data;
+    osc.partialSeq = '';
+    let output = '';
+    let i = 0;
+
+    while (i < input.length) {
+      // Check for start of OSC sequence: ESC ]
+      if (input[i] === '\x1b' && input[i + 1] === ']') {
+        // Look for "133;" after ESC ]
+        if (input.substring(i + 2, i + 6) === '133;') {
+          // Find terminator: BEL (\x07) or ST (\x1b\\)
+          let end = -1;
+          for (let j = i + 6; j < input.length; j++) {
+            if (input[j] === '\x07') { end = j + 1; break; }
+            if (input[j] === '\x1b' && input[j + 1] === '\\') { end = j + 2; break; }
+          }
+
+          if (end === -1) {
+            // Sequence split across chunks — buffer it
+            osc.partialSeq = input.substring(i);
+            break;
+          }
+
+          // Extract the sequence content between "133;" and terminator
+          const termIdx = input[end - 1] === '\\' ? end - 2 : end - 1;
+          const content = input.substring(i + 6, termIdx);
+          const marker = content[0];
+          const param = content.substring(1).replace(/^;/, '');
+
+          if (marker === 'A') {
+            osc.currentState = 'PROMPT';
+            osc.currentCommand = { promptRow: term.xterm.buffer.active.cursorY };
+          } else if (marker === 'B') {
+            osc.currentState = 'INPUT';
+          } else if (marker === 'C') {
+            osc.currentState = 'OUTPUT';
+            // Show running indicator
+            const runDot = term.pane.querySelector('.header-activity-dot');
+            if (runDot) {
+              runDot.classList.remove('status-success', 'status-error');
+              runDot.classList.add('status-running');
+              runDot.title = 'Command running...';
+            }
+          } else if (marker === 'D') {
+            osc.currentState = 'NORMAL';
+            const exitCode = parseInt(param) || 0;
+            if (osc.currentCommand) {
+              osc.currentCommand.exitCode = exitCode;
+              osc.commands.push(osc.currentCommand);
+              osc.currentCommand = null;
+            }
+            // Update status badge
+            this.updateTerminalStatusBadge(id, exitCode);
+          }
+
+          i = end;
+          continue;
+        }
+      }
+      output += input[i];
+      i++;
+    }
+
+    return output;
+  }
+
+  updateTerminalStatusBadge(id, exitCode) {
+    const term = this.terminals.get(id);
+    if (!term) return;
+    const dot = term.pane.querySelector('.header-activity-dot');
+    if (!dot) return;
+    dot.classList.remove('status-success', 'status-error', 'status-running');
+    if (exitCode === 0) {
+      dot.classList.add('status-success');
+      dot.title = 'Last command succeeded';
+    } else {
+      dot.classList.add('status-error');
+      dot.title = `Last command failed (exit ${exitCode})`;
     }
   }
 
