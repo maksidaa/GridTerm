@@ -34,6 +34,14 @@ class GridTermApp {
     this.pipeCounter = 0;
     this.recentActions = JSON.parse(localStorage.getItem('gridterm-recent-actions') || '[]');
 
+    // Tab data model
+    this.tabs = new Map();              // tabId → { id, name, directory, layout, activePaneId }
+    this.tabOrder = [];                 // ordered tab IDs
+    this.activeTabId = null;            // currently visible tab
+    this.paneToTab = new Map();         // paneId → tabId
+    this.tabCounter = 0;
+    this.tabScrollPositions = new Map(); // tabId → gridContainer.scrollTop
+
     this.gridContainer = document.getElementById('grid-container');
     this.addButton = document.getElementById('add-terminal');
     this.sidebar = document.getElementById('sidebar');
@@ -276,6 +284,9 @@ class GridTermApp {
     window.addEventListener('resize', () => {
       this.fitAllTerminals();
     });
+
+    // Create default tab
+    this.activeTabId = this.createTab({ name: 'Default' });
 
     // Show onboarding on first run, restore session, or show launch modal
     if (!localStorage.getItem('gridterm-onboarded')) {
@@ -863,6 +874,7 @@ class GridTermApp {
     // Store terminal info (including launch config for session restore)
     this.terminals.set(id, { xterm, fitAddon, pane, launchConfig: { name, directory, aiCommand, startupCommands } });
     this.allPanes.set(id, { type: 'terminal', pane: { pane } });
+    this.assignPaneToTab(id, this.activeTabId);
 
     // Lock user-provided names so auto-naming doesn't overwrite them
     if (name) {
@@ -1020,6 +1032,7 @@ class GridTermApp {
     // Store in maps
     this.browserPanes.set(id, browserPane);
     this.allPanes.set(id, { type: 'browser', pane: browserPane });
+    this.assignPaneToTab(id, this.activeTabId);
 
     // Set up header controls
     browserPane.expandBtn.addEventListener('click', () => {
@@ -1082,6 +1095,7 @@ class GridTermApp {
     // Store in maps
     this.browserPanes.set(id, expoPane);
     this.allPanes.set(id, { type: 'expo', pane: expoPane });
+    this.assignPaneToTab(id, this.activeTabId);
 
     // Set up header controls
     expoPane.expandBtn.addEventListener('click', () => {
@@ -1127,6 +1141,7 @@ class GridTermApp {
       browserPane.destroy();
       this.browserPanes.delete(id);
       this.allPanes.delete(id);
+      this.paneToTab.delete(id);
       this.removePipesForPane(id);
       this.updateGridLayout();
       this.renderSidebarPanes();
@@ -1527,6 +1542,7 @@ class GridTermApp {
       term.pane.remove();
       this.terminals.delete(id);
       this.allPanes.delete(id);
+      this.paneToTab.delete(id);
       this.removePipesForPane(id);
       this.updateGridLayout();
       this.fitAllTerminals();
@@ -1625,6 +1641,62 @@ class GridTermApp {
       }
     };
     document.addEventListener('keydown', escHandler);
+  }
+
+  // ── Tab Management ──────────────────────────────────────────────
+
+  createTab({ name = 'Default', directory = null } = {}) {
+    const tabId = `tab-${++this.tabCounter}`;
+    this.tabs.set(tabId, { id: tabId, name, directory, layout: null, activePaneId: null });
+    this.tabOrder.push(tabId);
+    return tabId;
+  }
+
+  deleteTab(tabId) {
+    this.tabs.delete(tabId);
+    this.tabOrder = this.tabOrder.filter(id => id !== tabId);
+    this.tabScrollPositions.delete(tabId);
+    // Clean up paneToTab entries
+    for (const [paneId, tid] of this.paneToTab) {
+      if (tid === tabId) this.paneToTab.delete(paneId);
+    }
+  }
+
+  getTabPanes(tabId) {
+    const paneIds = [];
+    for (const [paneId, tid] of this.paneToTab) {
+      if (tid === tabId) paneIds.push(paneId);
+    }
+    return paneIds;
+  }
+
+  getActiveTabPanes() {
+    if (!this.activeTabId) return Array.from(this.allPanes.keys());
+    return this.getTabPanes(this.activeTabId);
+  }
+
+  assignPaneToTab(paneId, tabId) {
+    this.paneToTab.set(paneId, tabId || this.activeTabId);
+  }
+
+  movePaneToTab(paneId, targetTabId) {
+    const oldTabId = this.paneToTab.get(paneId);
+    if (oldTabId === targetTabId) return [];
+
+    // Find pipes that will be detached (cross-tab)
+    const detached = [];
+    for (const [pipeId, pipe] of this.pipes) {
+      if (pipe.sourceId === paneId || pipe.targetId === paneId) {
+        const otherId = pipe.sourceId === paneId ? pipe.targetId : pipe.sourceId;
+        const otherTab = this.paneToTab.get(otherId);
+        if (otherTab && otherTab !== targetTabId) {
+          detached.push(pipeId);
+        }
+      }
+    }
+
+    this.paneToTab.set(paneId, targetTabId);
+    return detached;
   }
 
   updateGridLayout() {
