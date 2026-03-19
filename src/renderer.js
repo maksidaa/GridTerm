@@ -513,7 +513,7 @@ class GridTermApp {
     if (term) {
       const cmd = autoExec ? command + '\n' : command;
       window.terminal.write(targetId, cmd);
-      term.xterm.focus();
+      this.focusTerminalSafely(term.xterm);
     }
   }
 
@@ -630,7 +630,7 @@ class GridTermApp {
     // Insert a helpful command that references the image
     const command = `[Image: ${imagePath}] `;
     window.terminal.write(termId, command);
-    term.xterm.focus();
+    this.focusTerminalSafely(term.xterm);
   }
 
   setActiveTerminal(id) {
@@ -814,6 +814,7 @@ class GridTermApp {
           <button class="commands-btn">Shortcuts ▾</button>
           <div class="commands-dropdown hidden"></div>
         </div>
+        <button class="copy-btn" title="Copy">📋</button>
         <button class="minimize-btn" title="Minimize">─</button>
         <button class="expand-btn" title="Expand">⤢</button>
         <button class="close-btn" title="Close">×</button>
@@ -884,6 +885,7 @@ class GridTermApp {
     // Set up header controls
     const commandsBtn = pane.querySelector('.commands-btn');
     const dropdown = pane.querySelector('.commands-dropdown');
+    const copyBtn = pane.querySelector('.copy-btn');
     const minimizeBtn = pane.querySelector('.minimize-btn');
     const expandBtn = pane.querySelector('.expand-btn');
     const closeBtn = pane.querySelector('.close-btn');
@@ -891,6 +893,10 @@ class GridTermApp {
     commandsBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this.toggleDropdown(dropdown, id);
+    });
+
+    copyBtn.addEventListener('click', () => {
+      this.copyFromTerminal(id);
     });
 
     minimizeBtn.addEventListener('click', () => {
@@ -901,8 +907,24 @@ class GridTermApp {
       this.toggleExpand(id);
     });
 
-    closeBtn.addEventListener('click', () => {
-      this.closeTerminal(id);
+    closeBtn.addEventListener('click', (e) => {
+      if (e.shiftKey) {
+        this.closeTerminal(id);
+      } else {
+        this.confirmClosePane(id, 'terminal');
+      }
+    });
+
+    // Cmd+C copies selection instead of sending SIGINT when text is selected
+    xterm.attachCustomKeyEventHandler((e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'c' && e.type === 'keydown') {
+        if (xterm.hasSelection()) {
+          navigator.clipboard.writeText(xterm.getSelection());
+          xterm.clearSelection();
+          return false; // prevent SIGINT
+        }
+      }
+      return true;
     });
 
     // Click to focus terminal
@@ -934,7 +956,7 @@ class GridTermApp {
     // Fit after a short delay to ensure DOM is ready
     setTimeout(async () => {
       this.fitAllTerminals();
-      xterm.focus();
+      this.focusTerminalSafely(xterm);
 
       // Execute launch commands after terminal is ready
       if (directory) {
@@ -980,6 +1002,14 @@ class GridTermApp {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  focusTerminalSafely(xterm) {
+    const saved = this.gridContainer.scrollTop;
+    xterm.focus();
+    requestAnimationFrame(() => {
+      this.gridContainer.scrollTop = saved;
+    });
+  }
+
   async createBrowserPane({ name, url }) {
     const id = `browser-${++this.paneCounter}`;
     const displayName = name || 'Browser';
@@ -996,8 +1026,12 @@ class GridTermApp {
       browserPane.toggleExpand();
     });
 
-    browserPane.closeBtn.addEventListener('click', () => {
-      this.closeBrowserPane(id);
+    browserPane.closeBtn.addEventListener('click', (e) => {
+      if (e.shiftKey) {
+        this.closeBrowserPane(id);
+      } else {
+        this.confirmClosePane(id, 'browser');
+      }
     });
 
     // Wire up console capture for pipe forwarding
@@ -1054,8 +1088,12 @@ class GridTermApp {
       expoPane.toggleExpand();
     });
 
-    expoPane.closeBtn.addEventListener('click', () => {
-      this.closeBrowserPane(id);
+    expoPane.closeBtn.addEventListener('click', (e) => {
+      if (e.shiftKey) {
+        this.closeBrowserPane(id);
+      } else {
+        this.confirmClosePane(id, 'browser');
+      }
     });
 
     // Wire up console capture for pipe forwarding
@@ -1118,7 +1156,7 @@ class GridTermApp {
     if (term) {
       term.pane.classList.add('active-terminal');
       this.activeTerminalId = id;
-      term.xterm.focus();
+      this.focusTerminalSafely(term.xterm);
       return;
     }
 
@@ -1164,7 +1202,7 @@ class GridTermApp {
     // Refit terminal after a short delay
     setTimeout(() => {
       term.fitAddon.fit();
-      term.xterm.focus();
+      this.focusTerminalSafely(term.xterm);
     }, 50);
   }
 
@@ -1182,7 +1220,7 @@ class GridTermApp {
       this.updateGridLayout();
       setTimeout(() => {
         term.fitAddon.fit();
-        term.xterm.focus();
+        this.focusTerminalSafely(term.xterm);
       }, 50);
     } else {
       // Minimize: hide completely
@@ -1295,7 +1333,7 @@ class GridTermApp {
     window.terminal.write(termId, command);
     const term = this.terminals.get(termId);
     if (term) {
-      term.xterm.focus();
+      this.focusTerminalSafely(term.xterm);
     }
   }
 
@@ -1500,6 +1538,93 @@ class GridTermApp {
     if (this.allPanes.size === 0) {
       this.showLaunchModal();
     }
+  }
+
+  copyFromTerminal(id) {
+    const term = this.terminals.get(id);
+    if (!term) return;
+    const xterm = term.xterm;
+
+    let text;
+    if (xterm.hasSelection()) {
+      text = xterm.getSelection();
+    } else {
+      // Copy visible scrollback
+      const buffer = xterm.buffer.active;
+      const lines = [];
+      for (let i = 0; i < buffer.length; i++) {
+        const line = buffer.getLine(i);
+        if (line) lines.push(line.translateToString(true));
+      }
+      text = lines.join('\n').trimEnd();
+    }
+
+    if (text) {
+      navigator.clipboard.writeText(text);
+      this.showToast('Copied to clipboard', 'success');
+    }
+  }
+
+  confirmClosePane(paneId, type) {
+    // Remove any existing close confirmation popovers
+    document.querySelectorAll('.close-confirm').forEach(el => el.remove());
+
+    const paneEl = type === 'terminal'
+      ? this.terminals.get(paneId)?.pane
+      : this.browserPanes.get(paneId)?.pane?.pane || this.browserPanes.get(paneId)?.pane;
+    if (!paneEl) return;
+
+    const header = paneEl.querySelector('.terminal-header') || paneEl.querySelector('.browser-header');
+    if (!header) return;
+
+    // Get pane name
+    const nameInput = header.querySelector('.terminal-name') || header.querySelector('.browser-name');
+    const paneName = nameInput?.value || (type === 'terminal' ? 'Terminal' : 'Browser');
+
+    const popover = document.createElement('div');
+    popover.className = 'close-confirm';
+    popover.innerHTML = `
+      <div class="close-confirm-text">Close <strong>${paneName}</strong>?</div>
+      <div class="close-confirm-buttons">
+        <button class="close-confirm-cancel">Cancel</button>
+        <button class="close-confirm-ok">Close</button>
+      </div>
+    `;
+    header.style.position = 'relative';
+    header.appendChild(popover);
+
+    const cancel = popover.querySelector('.close-confirm-cancel');
+    const ok = popover.querySelector('.close-confirm-ok');
+
+    const dismiss = () => popover.remove();
+
+    cancel.addEventListener('click', (e) => { e.stopPropagation(); dismiss(); });
+    ok.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dismiss();
+      if (type === 'terminal') this.closeTerminal(paneId);
+      else this.closeBrowserPane(paneId);
+    });
+
+    // Dismiss on outside click
+    setTimeout(() => {
+      const outsideClick = (e) => {
+        if (!popover.contains(e.target)) {
+          dismiss();
+          document.removeEventListener('mousedown', outsideClick);
+        }
+      };
+      document.addEventListener('mousedown', outsideClick);
+    }, 0);
+
+    // Dismiss on Escape
+    const escHandler = (e) => {
+      if (e.key === 'Escape') {
+        dismiss();
+        document.removeEventListener('keydown', escHandler);
+      }
+    };
+    document.addEventListener('keydown', escHandler);
   }
 
   updateGridLayout() {
@@ -1893,15 +2018,12 @@ class GridTermApp {
         return;
       }
 
-      // Cmd+W - Close active pane
+      // Cmd+W - Close active pane (with confirmation)
       if (isMeta && e.key === 'w') {
         e.preventDefault();
         if (this.activePaneId) {
-          if (this.terminals.has(this.activePaneId)) {
-            this.closeTerminal(this.activePaneId);
-          } else if (this.browserPanes.has(this.activePaneId)) {
-            this.closeBrowserPane(this.activePaneId);
-          }
+          const type = this.terminals.has(this.activePaneId) ? 'terminal' : 'browser';
+          this.confirmClosePane(this.activePaneId, type);
         }
         return;
       }
@@ -2016,8 +2138,7 @@ class GridTermApp {
           this.hideContextMenu();
           const action = item.dataset.action;
           if (action === 'close') {
-            if (paneType === 'terminal') this.closeTerminal(paneId);
-            else this.closeBrowserPane(paneId);
+            this.confirmClosePane(paneId, paneType);
           } else if (action === 'minimize') {
             this.toggleMinimize(paneId);
           } else if (action === 'expand') {

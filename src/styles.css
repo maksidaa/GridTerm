@@ -732,6 +732,7 @@ body {
 }
 
 
+.copy-btn,
 .expand-btn,
 .close-btn {
   background: transparent;
@@ -743,6 +744,15 @@ body {
   border-radius: 5px;
   line-height: 1;
   transition: all 0.15s;
+}
+
+.copy-btn {
+  font-size: 13px;
+}
+
+.copy-btn:hover {
+  background: rgba(86, 211, 100, 0.15);
+  color: var(--accent-green);
 }
 
 .expand-btn:hover {
@@ -3371,4 +3381,68 @@ body.pipe-mode #add-terminal {
   color: var(--accent-blue);
   margin-left: 4px;
   flex-shrink: 0;
+}
+
+/* Close Pane Confirmation Popover */
+.close-confirm {
+  position: absolute;
+  top: 100%;
+  right: 4px;
+  z-index: 100;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 10px 14px;
+  box-shadow: var(--shadow-elevated);
+  white-space: nowrap;
+  animation: popoverFadeIn 0.12s ease-out;
+}
+
+@keyframes popoverFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.close-confirm-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.close-confirm-text strong {
+  color: var(--text-primary);
+}
+
+.close-confirm-buttons {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.close-confirm-cancel,
+.close-confirm-ok {
+  padding: 4px 12px;
+  border-radius: 5px;
+  border: none;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.close-confirm-cancel {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.close-confirm-cancel:hover {
+  background: var(--border-interactive);
+}
+
+.close-confirm-ok {
+  background: var(--accent-red-bg);
+  color: var(--accent-red);
+}
+
+.close-confirm-ok:hover {
+  background: rgba(248, 81, 73, 0.3);
 }
