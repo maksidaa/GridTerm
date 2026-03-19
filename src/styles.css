@@ -3573,3 +3573,27 @@ body.pipe-mode #add-terminal {
 .close-confirm-ok:hover {
   background: rgba(248, 81, 73, 0.3);
 }
+
+/* Context Menu Submenu */
+.context-submenu {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 4px 0;
+  min-width: 140px;
+  box-shadow: var(--shadow-elevated);
+  z-index: 4001;
+}
+
+.context-submenu .context-menu-item {
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 0.1s;
+}
+
+.context-submenu .context-menu-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}

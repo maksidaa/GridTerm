@@ -2554,6 +2554,11 @@ class GridTermApp {
         items += `<div class="context-menu-item" data-action="refresh"><span class="ctx-icon">↻</span>Refresh</div>`;
         items += `<div class="context-menu-item" data-action="copyurl"><span class="ctx-icon">🔗</span>Copy URL</div>`;
       }
+      // Move to Tab submenu (only show if multiple tabs exist)
+      if (this.tabOrder.length > 1) {
+        items += `<div class="context-menu-divider"></div>`;
+        items += `<div class="context-menu-item context-menu-submenu" data-action="move-tab"><span class="ctx-icon">→</span>Move to Tab ▸</div>`;
+      }
       items += `<div class="context-menu-divider"></div>`;
       items += `<div class="context-menu-item" data-action="close" style="color:#f85149;"><span class="ctx-icon">✕</span>Close<span class="ctx-shortcut">⌘W</span></div>`;
 
@@ -2588,6 +2593,9 @@ class GridTermApp {
           } else if (action === 'copyurl') {
             const bp = this.browserPanes.get(paneId);
             if (bp?.url) navigator.clipboard.writeText(bp.url);
+          } else if (action === 'move-tab') {
+            this.showMoveToTabSubmenu(paneId, item);
+            return; // don't hide context menu yet
           }
         });
       });
@@ -2601,6 +2609,59 @@ class GridTermApp {
 
   hideContextMenu() {
     document.getElementById('context-menu')?.classList.add('hidden');
+    // Also remove any submenus
+    document.querySelectorAll('.context-submenu').forEach(el => el.remove());
+  }
+
+  showMoveToTabSubmenu(paneId, anchorItem) {
+    // Remove any existing submenu
+    document.querySelectorAll('.context-submenu').forEach(el => el.remove());
+
+    const currentTabId = this.paneToTab.get(paneId);
+    const submenu = document.createElement('div');
+    submenu.className = 'context-submenu';
+
+    for (const tabId of this.tabOrder) {
+      if (tabId === currentTabId) continue;
+      const tab = this.tabs.get(tabId);
+      if (!tab) continue;
+      const item = document.createElement('div');
+      item.className = 'context-menu-item';
+      item.textContent = tab.name;
+      item.addEventListener('click', () => {
+        const detached = this.movePaneToTab(paneId, tabId);
+        // Detach crossed pipes
+        for (const pipeId of detached) {
+          this.removePipe(pipeId);
+        }
+        // Hide pane since it's moving to a non-active tab
+        const info = this.allPanes.get(paneId);
+        if (info) {
+          const el = info.type === 'terminal'
+            ? this.terminals.get(paneId)?.pane
+            : this.browserPanes.get(paneId)?.pane;
+          if (el) el.style.display = 'none';
+        }
+        this.hideContextMenu();
+        this.updateGridLayout();
+        this.renderSidebarPanes();
+        this.fitAllTerminals();
+        if (detached.length > 0) {
+          this.showToast(`Moved pane to "${tab.name}" (${detached.length} pipe${detached.length > 1 ? 's' : ''} detached)`, { type: 'info' });
+        } else {
+          this.showToast(`Moved pane to "${tab.name}"`, { type: 'info' });
+        }
+        this.saveSessionDebounced();
+      });
+      submenu.appendChild(item);
+    }
+
+    // Position submenu next to the anchor
+    const rect = anchorItem.getBoundingClientRect();
+    submenu.style.position = 'fixed';
+    submenu.style.left = (rect.right - 2) + 'px';
+    submenu.style.top = rect.top + 'px';
+    document.body.appendChild(submenu);
   }
 
   async duplicatePane(paneId) {
