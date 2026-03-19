@@ -293,7 +293,7 @@ class GridTermApp {
     // Show onboarding on first run, restore session, or show launch modal
     if (!localStorage.getItem('gridterm-onboarded')) {
       this.showOnboarding(); // will call showLaunchModal() on completion
-    } else if (this.appSettings.autoRestore && config.session && config.session.panes && config.session.panes.length > 0) {
+    } else if (this.appSettings.autoRestore && config.session && ((config.session.panes && config.session.panes.length > 0) || (config.session.tabs && config.session.tabs.length > 0))) {
       await this.restoreSession(config.session);
     } else {
       this.showLaunchModal();
@@ -1442,43 +1442,62 @@ class GridTermApp {
   }
 
   getSessionData() {
-    const panes = [];
-    for (const [id, info] of this.allPanes) {
-      if (info.type === 'terminal') {
-        const term = this.terminals.get(id);
-        if (!term) continue;
-        const name = term.pane.querySelector('.terminal-name')?.value || null;
-        const lc = term.launchConfig || {};
-        panes.push({ type: 'terminal', name, directory: lc.directory, aiCommand: lc.aiCommand });
-      } else if (info.type === 'browser') {
-        const bp = this.browserPanes.get(id);
-        if (!bp) continue;
-        const name = bp.pane.querySelector('.pane-name')?.value || 'Browser';
-        panes.push({ type: 'browser', name, url: bp.url });
-      } else if (info.type === 'expo') {
-        const ep = this.browserPanes.get(id);
-        if (!ep) continue;
-        const name = ep.pane.querySelector('.pane-name')?.value || 'Expo';
-        panes.push({ type: 'expo', name, url: ep.url, showQR: ep.showQR });
+    const tabs = [];
+    for (const tabId of this.tabOrder) {
+      const tab = this.tabs.get(tabId);
+      if (!tab) continue;
+
+      const tabPaneIds = this.getTabPanes(tabId);
+      const panes = [];
+      for (const id of tabPaneIds) {
+        const info = this.allPanes.get(id);
+        if (!info) continue;
+        if (info.type === 'terminal') {
+          const term = this.terminals.get(id);
+          if (!term) continue;
+          const name = term.pane.querySelector('.terminal-name')?.value || null;
+          const lc = term.launchConfig || {};
+          panes.push({ type: 'terminal', name, directory: lc.directory, aiCommand: lc.aiCommand });
+        } else if (info.type === 'browser') {
+          const bp = this.browserPanes.get(id);
+          if (!bp) continue;
+          const name = bp.pane.querySelector('.pane-name')?.value || 'Browser';
+          panes.push({ type: 'browser', name, url: bp.url });
+        } else if (info.type === 'expo') {
+          const ep = this.browserPanes.get(id);
+          if (!ep) continue;
+          const name = ep.pane.querySelector('.pane-name')?.value || 'Expo';
+          panes.push({ type: 'expo', name, url: ep.url, showQR: ep.showQR });
+        }
       }
-    }
-    // Save pipes by pane index (IDs change on restore)
-    const paneIds = Array.from(this.allPanes.keys());
-    const pipesData = [];
-    for (const [, pipe] of this.pipes) {
-      const sourceIdx = paneIds.indexOf(pipe.sourceId);
-      const targetIdx = paneIds.indexOf(pipe.targetId);
-      if (sourceIdx >= 0 && targetIdx >= 0) {
-        pipesData.push({ sourceIdx, targetIdx, filter: pipe.filter });
+
+      // Save pipes within this tab by pane index
+      const pipesData = [];
+      for (const [, pipe] of this.pipes) {
+        const sourceIdx = tabPaneIds.indexOf(pipe.sourceId);
+        const targetIdx = tabPaneIds.indexOf(pipe.targetId);
+        if (sourceIdx >= 0 && targetIdx >= 0) {
+          pipesData.push({ sourceIdx, targetIdx, filter: pipe.filter });
+        }
       }
+
+      const activePaneIndex = tabPaneIds.indexOf(tab.activePaneId);
+      tabs.push({
+        name: tab.name,
+        directory: tab.directory,
+        layout: tab.layout,
+        activePaneIndex: activePaneIndex >= 0 ? activePaneIndex : 0,
+        panes,
+        pipes: pipesData
+      });
     }
 
     return {
-      panes,
-      pipes: pipesData,
+      schemaVersion: 2,
+      tabs,
+      activeTabIndex: this.tabOrder.indexOf(this.activeTabId),
       sidebarVisible: this.sidebarVisible,
-      gridLayout: this.gridLayout,
-      activePaneIndex: Array.from(this.allPanes.keys()).indexOf(this.activePaneId)
+      gridLayout: this.gridLayout
     };
   }
 
@@ -1498,7 +1517,15 @@ class GridTermApp {
       this.setGridLayout(session.gridLayout);
     }
 
-    // Restore panes
+    if (session.schemaVersion >= 2) {
+      await this.restoreSessionV2(session);
+    } else {
+      await this.restoreSessionV1(session);
+    }
+  }
+
+  async restoreSessionV1(session) {
+    // Legacy flat format — restore all panes into the default tab
     for (const p of session.panes) {
       if (p.type === 'terminal') {
         await this.createTerminal({ name: p.name, directory: p.directory, aiCommand: p.aiCommand, startupCommands: [] });
@@ -1531,6 +1558,86 @@ class GridTermApp {
 
     if (session.panes.length > 0) {
       this.showToast(`Session restored (${session.panes.length} pane${session.panes.length > 1 ? 's' : ''})`, { type: 'info' });
+    }
+  }
+
+  async restoreSessionV2(session) {
+    // Clear default tab created by init
+    if (this.tabOrder.length === 1) {
+      const defaultTabId = this.tabOrder[0];
+      if (this.getTabPanes(defaultTabId).length === 0) {
+        this.deleteTab(defaultTabId);
+      }
+    }
+
+    let totalPanes = 0;
+
+    for (let i = 0; i < session.tabs.length; i++) {
+      const tabData = session.tabs[i];
+      const tabId = this.createTab({ name: tabData.name, directory: tabData.directory });
+      if (tabData.layout) {
+        this.tabs.get(tabId).layout = tabData.layout;
+      }
+
+      // Set as active so createTerminal/createBrowserPane assigns panes to this tab
+      this.activeTabId = tabId;
+
+      // Restore panes
+      for (const p of tabData.panes) {
+        if (p.type === 'terminal') {
+          await this.createTerminal({ name: p.name, directory: p.directory, aiCommand: p.aiCommand, startupCommands: [] });
+        } else if (p.type === 'browser') {
+          await this.createBrowserPane({ name: p.name, url: p.url });
+        } else if (p.type === 'expo') {
+          await this.createExpoPanePreview({ name: p.name, url: p.url, showQR: p.showQR });
+        }
+        totalPanes++;
+      }
+
+      // Restore pipes within this tab
+      if (tabData.pipes && tabData.pipes.length > 0) {
+        const tabPaneIds = this.getTabPanes(tabId);
+        for (const p of tabData.pipes) {
+          const sourceId = tabPaneIds[p.sourceIdx];
+          const targetId = tabPaneIds[p.targetIdx];
+          if (sourceId && targetId) {
+            this.createPipe(sourceId, targetId, p.filter);
+          }
+        }
+      }
+
+      // Set active pane for this tab
+      if (tabData.activePaneIndex >= 0) {
+        const tabPaneIds = this.getTabPanes(tabId);
+        if (tabPaneIds[tabData.activePaneIndex]) {
+          this.tabs.get(tabId).activePaneId = tabPaneIds[tabData.activePaneIndex];
+        }
+      }
+    }
+
+    // Switch to the active tab
+    const activeTabIndex = session.activeTabIndex >= 0 ? session.activeTabIndex : 0;
+    if (this.tabOrder[activeTabIndex]) {
+      this.switchToTab(this.tabOrder[activeTabIndex]);
+    }
+
+    // Hide panes from non-active tabs
+    for (const tabId of this.tabOrder) {
+      if (tabId === this.activeTabId) continue;
+      for (const paneId of this.getTabPanes(tabId)) {
+        const info = this.allPanes.get(paneId);
+        if (!info) continue;
+        const el = info.type === 'terminal'
+          ? this.terminals.get(paneId)?.pane
+          : this.browserPanes.get(paneId)?.pane;
+        if (el) el.style.display = 'none';
+      }
+    }
+
+    this.renderTabBar();
+
+    if (totalPanes > 0) {
+      this.showToast(`Session restored (${session.tabs.length} tab${session.tabs.length > 1 ? 's' : ''}, ${totalPanes} pane${totalPanes > 1 ? 's' : ''})`, { type: 'info' });
     }
   }
 
