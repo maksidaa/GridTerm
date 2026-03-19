@@ -3616,3 +3616,64 @@ body.pipe-mode #add-terminal {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
+
+/* AI Code Block Overlay */
+.code-block-overlay {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  max-width: 80%;
+  max-height: 60%;
+  z-index: 60;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow-elevated);
+  overflow: hidden;
+  animation: popoverFadeIn 0.15s ease-out;
+}
+
+.code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.code-block-lang {
+  font-size: 11px;
+  color: var(--accent-blue);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.code-block-copy {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.code-block-copy:hover {
+  background: rgba(86, 211, 100, 0.15);
+  color: var(--accent-green);
+}
+
+.code-block-pre {
+  padding: 10px 12px;
+  margin: 0;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+  overflow: auto;
+  max-height: 300px;
+  white-space: pre;
+  line-height: 1.5;
+}

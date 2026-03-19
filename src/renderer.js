@@ -81,6 +81,10 @@ class GridTermApp {
           this.detectPaneContext(id, cleanData);
           this.markPaneActive(id);
           this.forwardPipeData(id, cleanData);
+          // Detect code blocks in AI pane output
+          if (term.codeBlocks) {
+            this.detectCodeBlocks(id, cleanData);
+          }
         }
       });
 
@@ -881,10 +885,12 @@ class GridTermApp {
     xterm.open(termBody);
 
     // Store terminal info (including launch config for session restore)
+    const isAiPane = aiCommand && (aiCommand.includes('claude') || aiCommand.includes('codex'));
     this.terminals.set(id, {
       xterm, fitAddon, pane,
       launchConfig: { name, directory, aiCommand, startupCommands },
-      osc133: { commands: [], currentState: 'NORMAL', currentCommand: null, partialSeq: '' }
+      osc133: { commands: [], currentState: 'NORMAL', currentCommand: null, partialSeq: '' },
+      codeBlocks: isAiPane ? { state: 'NORMAL', currentBlock: null, blocks: [], buffer: '' } : null
     });
     this.allPanes.set(id, { type: 'terminal', pane: { pane } });
     this.assignPaneToTab(id, this.activeTabId);
@@ -1772,6 +1778,83 @@ class GridTermApp {
       dot.classList.add('status-error');
       dot.title = `Last command failed (exit ${exitCode})`;
     }
+  }
+
+  detectCodeBlocks(id, data) {
+    const term = this.terminals.get(id);
+    if (!term || !term.codeBlocks) return;
+
+    const cb = term.codeBlocks;
+    cb.buffer += data;
+
+    // Process complete lines
+    const lines = cb.buffer.split('\n');
+    cb.buffer = lines.pop() || ''; // keep incomplete last line in buffer
+
+    for (const line of lines) {
+      // Strip ANSI escape sequences for matching
+      const clean = line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').trim();
+
+      if (cb.state === 'NORMAL') {
+        if (clean.startsWith('```')) {
+          const language = clean.slice(3).trim() || '';
+          cb.state = 'CAPTURING';
+          cb.currentBlock = {
+            language,
+            lines: [],
+            startRow: term.xterm.buffer.active.baseY + term.xterm.buffer.active.cursorY
+          };
+        }
+      } else if (cb.state === 'CAPTURING') {
+        if (clean === '```') {
+          cb.state = 'NORMAL';
+          if (cb.currentBlock && cb.currentBlock.lines.length > 0) {
+            cb.currentBlock.endRow = term.xterm.buffer.active.baseY + term.xterm.buffer.active.cursorY;
+            cb.currentBlock.text = cb.currentBlock.lines.join('\n');
+            cb.blocks.push(cb.currentBlock);
+            this.renderCodeBlockOverlay(id, cb.currentBlock);
+          }
+          cb.currentBlock = null;
+        } else if (cb.currentBlock) {
+          // Strip ANSI codes but preserve the raw text
+          cb.currentBlock.lines.push(line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, ''));
+        }
+      }
+    }
+  }
+
+  renderCodeBlockOverlay(id, block) {
+    const term = this.terminals.get(id);
+    if (!term) return;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'code-block-overlay';
+    overlay.innerHTML = `
+      <div class="code-block-header">
+        ${block.language ? `<span class="code-block-lang">${block.language}</span>` : ''}
+        <button class="code-block-copy" title="Copy code">📋 Copy</button>
+      </div>
+      <pre class="code-block-pre">${this.escapeHtml(block.text)}</pre>
+    `;
+
+    overlay.querySelector('.code-block-copy').addEventListener('click', () => {
+      navigator.clipboard.writeText(block.text);
+      this.showToast('Code copied to clipboard', 'success');
+    });
+
+    // Append to terminal pane
+    term.pane.appendChild(overlay);
+
+    // Auto-dismiss after 30s or on scroll
+    const dismiss = () => { overlay.remove(); };
+    setTimeout(dismiss, 30000);
+    overlay.querySelector('.code-block-header').addEventListener('dblclick', dismiss);
+  }
+
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
   }
 
   handleTerminalClick(id, e) {
