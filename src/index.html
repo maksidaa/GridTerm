@@ -28,10 +28,18 @@
   <div id="main-container">
     <!-- Sidebar -->
     <div id="sidebar" class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-header" data-section="panes">Open Panes <span class="collapse-icon">▼</span></div>
+        <div class="sidebar-content" id="section-panes">
+          <div id="sidebar-panes"></div>
+        </div>
+      </div>
+
       <div class="sidebar-section collapsed">
         <div class="sidebar-header" data-section="directories">📁 Directories <span class="collapse-icon">▼</span></div>
         <div class="sidebar-content" id="section-directories">
           <div id="sidebar-directories"></div>
+          <div id="directories-empty" class="sidebar-empty-hint">Add project folders for quick access</div>
           <button id="sidebar-add-dir" class="sidebar-btn add-btn">+ Add Directory</button>
         </div>
       </div>
@@ -40,6 +48,7 @@
         <div class="sidebar-header" data-section="commands">⌘ Commands <span class="collapse-icon">▼</span></div>
         <div class="sidebar-content" id="section-commands">
           <div id="sidebar-commands"></div>
+          <div id="commands-empty" class="sidebar-empty-hint">Save commands to run them quickly</div>
           <button id="sidebar-add-cmd" class="sidebar-btn add-btn">+ Add Command</button>
         </div>
       </div>

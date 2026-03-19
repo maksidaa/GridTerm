@@ -64,6 +64,7 @@ class GridTermApp {
         if (term) {
           term.xterm.write(data);
           this.detectPaneContext(id, data);
+          this.markPaneActive(id);
         }
       });
 
@@ -343,14 +344,71 @@ class GridTermApp {
   }
 
   renderSidebar() {
-    // Render directories
+    this.renderSidebarPanes();
     this.renderSidebarDirectories();
-
-    // Render commands
     this.renderSidebarCommands();
-
-    // Update titlebar directory dropdown
     this.updateTitlebarDirectories();
+    this.updateEmptyHints();
+  }
+
+  renderSidebarPanes() {
+    const container = document.getElementById('sidebar-panes');
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (this.allPanes.size === 0) {
+      container.innerHTML = '<div class="sidebar-empty-hint">No open panes</div>';
+      return;
+    }
+
+    let index = 1;
+    for (const [id, info] of this.allPanes) {
+      let name, icon, isMinimized = false;
+
+      if (info.type === 'terminal') {
+        const term = this.terminals.get(id);
+        if (!term) continue;
+        name = term.pane.querySelector('.terminal-name')?.value || `Terminal ${index}`;
+        icon = term.launchConfig?.aiCommand?.includes('claude') ? '🤖' :
+               term.launchConfig?.aiCommand?.includes('codex') ? '🧠' : '💻';
+        isMinimized = term.pane.classList.contains('minimized');
+      } else if (info.type === 'browser') {
+        const bp = this.browserPanes.get(id);
+        if (!bp) continue;
+        name = bp.pane.querySelector('.pane-name')?.value || 'Browser';
+        icon = '🌐';
+      } else if (info.type === 'expo') {
+        const ep = this.browserPanes.get(id);
+        if (!ep) continue;
+        name = ep.pane.querySelector('.pane-name')?.value || 'Expo';
+        icon = '📱';
+      }
+
+      const isActive = this.activePaneId === id;
+      const item = document.createElement('div');
+      item.className = `sidebar-pane-item${isActive ? ' active' : ''}${isMinimized ? ' minimized' : ''}`;
+      item.dataset.paneId = id;
+      item.innerHTML = `
+        <span class="pane-activity-dot" id="activity-${id}"></span>
+        <span class="pane-type-icon">${icon}</span>
+        <span class="pane-item-name">${name}</span>
+        ${isMinimized ? '<span class="pane-minimized-badge">min</span>' : ''}
+        ${index <= 9 ? `<span class="pane-shortcut">⌘${index}</span>` : ''}
+      `;
+      item.addEventListener('click', () => {
+        if (isMinimized) this.toggleMinimize(id);
+        this.setActivePaneId(id);
+      });
+      container.appendChild(item);
+      index++;
+    }
+  }
+
+  updateEmptyHints() {
+    const dirEmpty = document.getElementById('directories-empty');
+    const cmdEmpty = document.getElementById('commands-empty');
+    if (dirEmpty) dirEmpty.style.display = this.directories.length > 0 ? 'none' : '';
+    if (cmdEmpty) cmdEmpty.style.display = this.commands.length > 0 ? 'none' : '';
   }
 
   updateTitlebarDirectories() {
@@ -368,6 +426,7 @@ class GridTermApp {
   renderSidebarDirectories() {
     const container = document.getElementById('sidebar-directories');
     container.innerHTML = '';
+    this.updateEmptyHints();
 
     this.directories.forEach((dir, index) => {
       const item = document.createElement('div');
@@ -392,6 +451,7 @@ class GridTermApp {
   renderSidebarCommands() {
     const container = document.getElementById('sidebar-commands');
     container.innerHTML = '';
+    this.updateEmptyHints();
 
     this.commands.forEach((cmd, index) => {
       const item = document.createElement('div');
@@ -725,6 +785,7 @@ class GridTermApp {
     pane.id = id;
     pane.innerHTML = `
       <div class="terminal-header">
+        <span class="header-activity-dot"></span>
         <input type="text" class="terminal-name" placeholder="Terminal ${this.terminalCounter}" value="${displayName}">
         <div class="commands-wrapper">
           <button class="commands-btn">Shortcuts ▾</button>
@@ -843,8 +904,9 @@ class GridTermApp {
     // Set as active terminal
     this.setActiveTerminal(id);
 
-    // Update grid and fit terminals
+    // Update grid, sidebar pane list, and fit terminals
     this.updateGridLayout();
+    this.renderSidebarPanes();
 
     // Fit after a short delay to ensure DOM is ready
     setTimeout(async () => {
@@ -924,6 +986,7 @@ class GridTermApp {
 
     // Update grid layout
     this.updateGridLayout();
+    this.renderSidebarPanes();
     this.saveSessionDebounced();
 
     return browserPane;
@@ -972,6 +1035,7 @@ class GridTermApp {
 
     // Update grid layout
     this.updateGridLayout();
+    this.renderSidebarPanes();
     this.saveSessionDebounced();
 
     return expoPane;
@@ -984,6 +1048,7 @@ class GridTermApp {
       this.browserPanes.delete(id);
       this.allPanes.delete(id);
       this.updateGridLayout();
+      this.renderSidebarPanes();
       this.saveSessionDebounced();
     }
 
@@ -1020,6 +1085,9 @@ class GridTermApp {
       bp.pane.classList.add('active-pane');
       if (bp.focus) bp.focus();
     }
+
+    // Update sidebar pane list to reflect active state
+    this.renderSidebarPanes();
   }
 
   toggleDropdown(dropdown, termId) {
@@ -1355,6 +1423,7 @@ class GridTermApp {
       this.allPanes.delete(id);
       this.updateGridLayout();
       this.fitAllTerminals();
+      this.renderSidebarPanes();
       this.saveSessionDebounced();
     }
 
@@ -1855,6 +1924,30 @@ class GridTermApp {
       if (!ep) return;
       const name = ep.pane.querySelector('.pane-name')?.value || 'Expo';
       await this.createExpoPanePreview({ name: name + ' (copy)', url: ep.url, showQR: ep.showQR });
+    }
+  }
+
+  // ==========================================
+  // Activity Tracking
+  // ==========================================
+  markPaneActive(id) {
+    // Light up the activity dot in sidebar and pane header
+    const dot = document.getElementById(`activity-${id}`);
+    if (dot) {
+      dot.classList.add('active');
+      clearTimeout(dot._fadeTimer);
+      dot._fadeTimer = setTimeout(() => dot.classList.remove('active'), 2000);
+    }
+
+    // Also update the pane header activity dot
+    const pane = this.terminals.get(id)?.pane || this.browserPanes.get(id)?.pane;
+    if (pane) {
+      const headerDot = pane.querySelector('.header-activity-dot');
+      if (headerDot) {
+        headerDot.classList.add('active');
+        clearTimeout(headerDot._fadeTimer);
+        headerDot._fadeTimer = setTimeout(() => headerDot.classList.remove('active'), 2000);
+      }
     }
   }
 
