@@ -3677,3 +3677,43 @@ body.pipe-mode #add-terminal {
   white-space: pre;
   line-height: 1.5;
 }
+
+/* Dictation Overlay */
+.dictation-overlay {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 150;
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent-blue);
+  border-radius: 10px;
+  padding: 10px 14px;
+  box-shadow: 0 4px 20px rgba(108, 182, 255, 0.2);
+  animation: popoverFadeIn 0.15s ease-out;
+  min-width: 280px;
+}
+
+.dictation-label {
+  font-size: 11px;
+  color: var(--accent-blue);
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.dictation-input {
+  width: 100%;
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 14px;
+  padding: 8px 10px;
+  resize: none;
+  outline: none;
+  font-family: inherit;
+}
+
+.dictation-input:focus {
+  border-color: var(--accent-blue);
+}

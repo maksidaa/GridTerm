@@ -979,6 +979,13 @@ class GridTermApp {
       this.markUserRenamed(id);
     });
 
+    // Dictation support — intercept compositionstart on xterm's hidden textarea
+    if (xterm.textarea) {
+      xterm.textarea.addEventListener('compositionstart', () => {
+        this.showDictationOverlay(id);
+      });
+    }
+
     // Drag and drop for images/screenshots
     this.setupImageDragDrop(pane, termBody, id);
 
@@ -1855,6 +1862,50 @@ class GridTermApp {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  showDictationOverlay(termId) {
+    // Don't show multiple overlays
+    if (document.querySelector('.dictation-overlay')) return;
+
+    const term = this.terminals.get(termId);
+    if (!term) return;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'dictation-overlay';
+    overlay.innerHTML = `
+      <div class="dictation-label">🎤 Dictating...</div>
+      <textarea class="dictation-input" placeholder="Speak now..." rows="2"></textarea>
+    `;
+    term.pane.appendChild(overlay);
+
+    const input = overlay.querySelector('.dictation-input');
+    input.focus();
+
+    const finish = () => {
+      const text = input.value;
+      overlay.remove();
+      if (text.trim()) {
+        window.terminal.write(termId, text);
+      }
+      this.focusTerminalSafely(term.xterm);
+    };
+
+    input.addEventListener('compositionend', () => {
+      // Small delay to let the final text settle
+      setTimeout(finish, 100);
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        overlay.remove();
+        this.focusTerminalSafely(term.xterm);
+      }
+      if (e.key === 'Enter' && !e.isComposing) {
+        e.preventDefault();
+        finish();
+      }
+    });
   }
 
   handleTerminalClick(id, e) {
